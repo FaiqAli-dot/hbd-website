@@ -108,9 +108,13 @@ async function runDesktopVideo() {
   const page = await context.newPage()
   await page.goto(BASE, { waitUntil: 'networkidle' })
   await page.waitForTimeout(500)
+  // Slow pointer drift so camera parallax is visible in the recording
   for (const key of gestures) {
+    await page.mouse.move(200 + Math.random() * 900, 180 + Math.random() * 500)
     await page.keyboard.press(key)
-    await page.waitForTimeout(1350)
+    await page.waitForTimeout(400)
+    await page.mouse.move(400 + Math.random() * 700, 220 + Math.random() * 420)
+    await page.waitForTimeout(1050)
   }
   await page.waitForTimeout(400)
   const cont = page.locator('button:has-text("Continue")')

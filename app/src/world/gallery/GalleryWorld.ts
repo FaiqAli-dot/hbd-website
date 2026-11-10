@@ -36,14 +36,14 @@ function seed(i: number): number {
 function entryPose(dir: GestureDirection, i: number): Pose {
   const r = seed(i)
   const r2 = seed(i + 17)
-  const depth = -2.8 - r * 4.5
-  const scale = 0.55 + r2 * 0.55
+  const depth = -6.5 - r * 5.5
+  const scale = 0.35 + r2 * 0.4
   switch (dir) {
     case 'left':
       return {
-        x: 7.2 + r * 2.2,
-        y: -1.6 + r2 * 3.2,
-        z: depth + 1.2,
+        x: 8.5 + r * 2.8,
+        y: -1.8 + r2 * 3.5,
+        z: depth,
         rx: 0.15 + r * 0.4,
         ry: -0.75 - r2 * 0.4,
         rz: 0.2 - r * 0.35,
@@ -51,9 +51,9 @@ function entryPose(dir: GestureDirection, i: number): Pose {
       }
     case 'right':
       return {
-        x: -9.5 - r * 3.2,
-        y: -1.8 + r2 * 4.0,
-        z: depth + 0.4,
+        x: -8.8 - r * 2.8,
+        y: -1.6 + r2 * 3.6,
+        z: depth,
         rx: -0.2 - r * 0.3,
         ry: 0.85 + r2 * 0.55,
         rz: -0.18 + r * 0.3,
@@ -61,9 +61,9 @@ function entryPose(dir: GestureDirection, i: number): Pose {
       }
     case 'up':
       return {
-        x: -3.5 + r * 7,
-        y: -7.5 - r2 * 2.5,
-        z: depth + 1.2,
+        x: -3.2 + r * 6.5,
+        y: -7.2 - r2 * 2.2,
+        z: depth + 0.5,
         rx: 1.1 + r * 0.35,
         ry: -0.35 + r2 * 0.7,
         rz: 0.15 - r * 0.4,
@@ -71,9 +71,9 @@ function entryPose(dir: GestureDirection, i: number): Pose {
       }
     case 'down':
       return {
-        x: -3.2 + r * 6.5,
-        y: 7.8 + r2 * 2.2,
-        z: depth + 0.8,
+        x: -3.0 + r * 6.0,
+        y: 7.4 + r2 * 2.0,
+        z: depth + 0.4,
         rx: -1.05 - r * 0.3,
         ry: 0.3 - r2 * 0.6,
         rz: -0.12 + r * 0.35,
@@ -82,46 +82,49 @@ function entryPose(dir: GestureDirection, i: number): Pose {
   }
 }
 
-/** Mid-flight waypoint clearly inside the camera frustum (large + near) */
+/**
+ * Mid-flight waypoint: come CLOSE to camera with strong perspective tilt
+ * so travel reads as Z-depth, not a flat 2D slide.
+ */
 function midPose(dir: GestureDirection, i: number): Pose {
   const r = seed(i + 3)
   const r2 = seed(i + 11)
   const base: Record<GestureDirection, Pose> = {
     left: {
-      x: 2.6 + r * 1.1,
-      y: -0.6 + r2 * 1.3,
-      z: 0.35 - r * 0.6,
-      rx: 0.28,
-      ry: -0.62,
-      rz: 0.22,
-      s: 0.95 + r * 0.2,
+      x: 1.8 + r * 0.9,
+      y: -0.45 + r2 * 1.0,
+      z: 1.35 + r * 0.45,
+      rx: 0.35 + r * 0.2,
+      ry: -0.85 - r2 * 0.25,
+      rz: 0.28,
+      s: 1.15 + r * 0.2,
     },
     right: {
-      x: -2.8 - r * 1.0,
-      y: 0.45 - r2 * 1.2,
-      z: 0.4 - r * 0.7,
-      rx: -0.22,
-      ry: 0.58,
-      rz: -0.18,
-      s: 0.92 + r * 0.25,
+      x: -2.0 - r * 0.85,
+      y: 0.35 - r2 * 0.95,
+      z: 1.4 + r * 0.4,
+      rx: -0.3 - r * 0.15,
+      ry: 0.8 + r2 * 0.3,
+      rz: -0.25,
+      s: 1.12 + r * 0.22,
     },
     up: {
-      x: -1.2 + r * 2.6,
-      y: -1.9 - r2 * 0.55,
-      z: 0.55 - r * 0.5,
-      rx: 0.62,
-      ry: 0.18 - r2 * 0.35,
-      rz: 0.12,
-      s: 1.0 + r * 0.15,
+      x: -0.9 + r * 2.0,
+      y: -1.35 - r2 * 0.4,
+      z: 1.55 + r * 0.35,
+      rx: 0.85 + r * 0.2,
+      ry: 0.25 - r2 * 0.4,
+      rz: 0.18,
+      s: 1.2 + r * 0.15,
     },
     down: {
-      x: 1.1 - r * 2.3,
-      y: 2.0 + r2 * 0.55,
-      z: 0.45 - r * 0.55,
-      rx: -0.55,
-      ry: -0.12 + r2 * 0.3,
-      rz: -0.1,
-      s: 0.98 + r * 0.18,
+      x: 0.85 - r * 1.9,
+      y: 1.45 + r2 * 0.4,
+      z: 1.5 + r * 0.35,
+      rx: -0.8 - r * 0.15,
+      ry: -0.2 + r2 * 0.35,
+      rz: -0.16,
+      s: 1.18 + r * 0.16,
     },
   }
   return base[dir]
@@ -295,6 +298,10 @@ export class GalleryWorld {
     return this.planes.filter((p) => p?.settled).map((p) => p.mesh)
   }
 
+  isRevealing(): boolean {
+    return this.revealing
+  }
+
   tryGesture(direction: GestureDirection, camera: THREE.PerspectiveCamera): boolean {
     if (this.revealing || this.complete) return false
     const photo = galleryPhotos[this.index]
@@ -396,9 +403,10 @@ export class GalleryWorld {
     }
     // Camera participates — nudge opposite the incoming flight + slight dolly
     const camNudge = {
-      x: direction === 'left' ? 0.42 : direction === 'right' ? -0.42 : (seed(i) - 0.5) * 0.3,
-      y: direction === 'up' ? 0.32 : direction === 'down' ? -0.28 : 0.06 + seed(i + 2) * 0.1,
-      z: camOrigin.z - 0.25 - seed(i) * 0.35,
+      x: direction === 'left' ? 0.55 : direction === 'right' ? -0.55 : (seed(i) - 0.5) * 0.4,
+      y: direction === 'up' ? 0.42 : direction === 'down' ? -0.38 : 0.08 + seed(i + 2) * 0.12,
+      // Dolly in as the plane rushes past the mid waypoint
+      z: camOrigin.z - 0.85 - seed(i) * 0.45,
     }
 
     const tl = gsap.timeline()
@@ -483,9 +491,16 @@ export class GalleryWorld {
     )
     tl.to(plane.material.uniforms.uDistort, { value: 0, duration: 0.5, ease: 'power2.out' }, 0.85)
     tl.to(plane.material.uniforms.uRgbSplit, { value: 0, duration: 0.4 }, 0.9)
+    // Soft return — leave a residual offset so idle parallax stays alive
     tl.to(
       camera.position,
-      { x: 0, y: 0.15, z: 5.2, duration: 0.7, ease: 'power3.out' },
+      {
+        x: camNudge.x * 0.15,
+        y: 0.15 + camNudge.y * 0.2,
+        z: 5.2,
+        duration: 0.75,
+        ease: 'power3.out',
+      },
       0.95,
     )
     // Unlock progress once the plane has clearly travelled through mid-space

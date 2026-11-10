@@ -496,11 +496,17 @@ export class Experience {
     const parallaxY = reduced ? 0 : this.pointer.y * 0.1 + this.gyro.y * 0.16
 
     if (!this.unlocked && this.chapter === 'gallery') {
-      const tx = parallaxX * 0.55
-      const ty = 0.15 + parallaxY * 0.4
-      this.camera.position.x += (tx - this.camera.position.x) * 0.04
-      this.camera.position.y += (ty - this.camera.position.y) * 0.04
-      this.camera.lookAt(parallaxX * 0.35, 0.1 + parallaxY * 0.2, 0)
+      // Idle breathing + pointer/gyro so the void never feels locked
+      if (!this.gallery.isRevealing()) {
+        const breath = reduced ? 0 : Math.sin(t * 0.45) * 0.1
+        const tx = parallaxX * 1.05 + breath
+        const ty = 0.15 + parallaxY * 0.7 + Math.cos(t * 0.32) * 0.07
+        const tz = 5.2 + Math.sin(t * 0.28) * 0.22 + parallaxY * 0.12
+        this.camera.position.x += (tx - this.camera.position.x) * 0.06
+        this.camera.position.y += (ty - this.camera.position.y) * 0.06
+        this.camera.position.z += (tz - this.camera.position.z) * 0.05
+        this.camera.lookAt(parallaxX * 0.7, 0.12 + parallaxY * 0.35, -0.5)
+      }
     } else if (this.unlocked) {
       const tx = this.cameraBase.x + parallaxX * 0.35
       const ty = this.cameraBase.y + parallaxY * 0.25
