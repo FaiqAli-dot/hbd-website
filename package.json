@@ -1,0 +1,20 @@
+{
+  "name": "hbd-website",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "verify": "npm run build && vite preview --host 127.0.0.1 --port 4173 & sleep 1 && node scripts/verify.mjs; code=$?; kill %1 2>/dev/null; exit $code"
+  },
+  "devDependencies": {
+    "playwright": "^1.65.0",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.6"
+  },
+  "dependencies": {
+    "gsap": "^3.15.1"
+  }
+}
