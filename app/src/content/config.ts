@@ -212,6 +212,7 @@ export const finaleCopy = {
 export const galleryCopy = {
   introHint: 'Follow the hand',
   scrollHint: 'Now, scroll up…',
+  continueLabel: 'Continue',
   undoLabel: 'Go back',
 }
 

@@ -15,6 +15,7 @@ export interface OverlayApi {
   setChapter: (chapter: 'gallery' | 'letter' | 'memories' | 'finale') => void
   setMemoryLabel: (label: string | null) => void
   onUndo: (cb: () => void) => void
+  onContinue: (cb: () => void) => void
   handRoot: HTMLElement
   destroy: () => void
 }
@@ -32,11 +33,12 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     </div>
 
     <div class="gallery-hud" data-gallery-hud>
-      <div class="gallery-hud__guide">
+      <button type="button" class="gallery-hud__guide" data-continue data-no-gesture aria-label="${galleryCopy.scrollHint}">
         ${createHandMarkup()}
         <p class="gallery-hud__hint" data-hint>${galleryCopy.introHint}</p>
         <p class="gallery-hud__gesture" data-gesture-label></p>
-      </div>
+        <span class="gallery-hud__continue" data-continue-label hidden>${galleryCopy.continueLabel}</span>
+      </button>
       <div class="gallery-hud__chrome">
         <button type="button" class="gallery__undo" data-undo data-no-gesture disabled>${galleryCopy.undoLabel}</button>
         <div class="gallery__progress" aria-live="polite">
@@ -95,6 +97,28 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     undoCb?.()
   })
 
+  const continueBtn = root.querySelector('[data-continue]') as HTMLButtonElement
+  const continueLabel = root.querySelector('[data-continue-label]') as HTMLElement
+  let continueCb: (() => void) | null = null
+  // During gallery, the guide is visual-only (not a button target for gestures).
+  continueBtn.disabled = true
+  continueBtn.addEventListener('pointerdown', (e) => {
+    if (!document.documentElement.classList.contains('gallery-complete')) {
+      e.preventDefault()
+      return
+    }
+    e.stopPropagation()
+  })
+  continueBtn.addEventListener('click', (e) => {
+    if (!document.documentElement.classList.contains('gallery-complete')) {
+      e.preventDefault()
+      return
+    }
+    e.preventDefault()
+    e.stopPropagation()
+    continueCb?.()
+  })
+
   const progressCurrent = root.querySelector('[data-progress-current]') as HTMLElement
   const progressTotal = root.querySelector('[data-progress-total]') as HTMLElement
   const hint = root.querySelector('[data-hint]') as HTMLElement
@@ -120,9 +144,15 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     },
     setGalleryComplete: (complete) => {
       galleryHud.classList.toggle('is-complete', complete)
+      continueBtn.disabled = !complete
+      continueBtn.classList.toggle('is-tappable', complete)
+      continueLabel.hidden = !complete
       if (complete) {
         hint.textContent = galleryCopy.scrollHint
         gestureLabel.textContent = ''
+        continueBtn.setAttribute('aria-label', `${galleryCopy.scrollHint} ${galleryCopy.continueLabel}`)
+      } else {
+        continueBtn.setAttribute('aria-label', galleryCopy.introHint)
       }
     },
     setChapter: (chapter) => {
@@ -139,6 +169,9 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     },
     onUndo: (cb) => {
       undoCb = cb
+    },
+    onContinue: (cb) => {
+      continueCb = cb
     },
     destroy: () => root.remove(),
   }

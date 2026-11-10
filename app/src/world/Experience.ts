@@ -39,10 +39,12 @@ export class Experience {
   private scrollProgress = 0
   private chapter: 'gallery' | 'letter' | 'memories' | 'finale' = 'gallery'
   private detachGestures: (() => void) | null = null
+  private detachScrollLock: (() => void) | null = null
   private raf = 0
   private canvas: HTMLCanvasElement
   private extraCleanup: Array<() => void> = []
   private app: HTMLElement
+  private unlocked = false
 
   constructor(app: HTMLElement) {
     this.app = app
@@ -94,7 +96,8 @@ export class Experience {
       if (this.gallery.undo(this.camera)) {
         const p = this.gallery.getProgress()
         this.ui.setProgress(p.seen, p.total)
-        this.ui.setGalleryComplete(false)
+        if (this.unlocked) this.relockGallery()
+        else this.ui.setGalleryComplete(false)
         this.promptGesture()
       }
     })
@@ -106,12 +109,12 @@ export class Experience {
     })
 
     this.gallery.onComplete(() => {
-      document.documentElement.classList.add('gallery-complete')
-      document.body.classList.add('gallery-complete')
-      this.ui.setGalleryComplete(true)
-      this.hand.demonstrate('scroll-up')
-      this.ui.setHint(galleryCopy.scrollHint, '')
-      ScrollTrigger.refresh()
+      this.unlockJourney()
+    })
+
+    this.ui.onContinue(() => {
+      if (!this.unlocked) this.unlockJourney()
+      this.scrollIntoJourney()
     })
 
     this.bindInput()
@@ -121,6 +124,68 @@ export class Experience {
     document.addEventListener('visibilitychange', this.onVisibility)
 
     this.tick()
+  }
+
+  /** Release iOS/Android scroll lock and enable the rest of the journey. */
+  private unlockJourney(): void {
+    if (this.unlocked) {
+      this.ui.setGalleryComplete(true)
+      return
+    }
+    this.unlocked = true
+
+    document.documentElement.classList.add('gallery-complete')
+    document.body.classList.add('gallery-complete')
+    // Explicit styles help iOS Safari drop the prior height:100% / overflow:hidden lock.
+    document.documentElement.style.overflowY = 'auto'
+    document.documentElement.style.height = 'auto'
+    document.documentElement.style.touchAction = 'pan-y'
+    document.body.style.overflowY = 'auto'
+    document.body.style.height = 'auto'
+    document.body.style.touchAction = 'pan-y'
+
+    this.canvas.style.touchAction = 'pan-y'
+    this.detachScrollLock?.()
+    this.detachScrollLock = null
+
+    this.ui.setGalleryComplete(true)
+    this.hand.demonstrate('scroll-up')
+    this.ui.setHint(galleryCopy.scrollHint, '')
+
+    // Force layout, then refresh ScrollTrigger so scrubbing matches new document height.
+    void document.body.offsetHeight
+    requestAnimationFrame(() => {
+      ScrollTrigger.refresh()
+    })
+  }
+
+  private scrollIntoJourney(): void {
+    const letter = document.getElementById('chapter-letter')
+    if (!letter) {
+      window.scrollTo({ top: Math.round(window.innerHeight * 0.85), behavior: 'smooth' })
+      return
+    }
+    const top = letter.getBoundingClientRect().top + window.scrollY + Math.round(window.innerHeight * 0.15)
+    window.scrollTo({ top, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+  }
+
+  private relockGallery(): void {
+    this.unlocked = false
+    this.chapter = 'gallery'
+    window.scrollTo({ top: 0, behavior: 'auto' })
+    document.documentElement.classList.remove('gallery-complete')
+    document.body.classList.remove('gallery-complete')
+    document.documentElement.style.overflowY = ''
+    document.documentElement.style.height = ''
+    document.documentElement.style.touchAction = ''
+    document.body.style.overflowY = ''
+    document.body.style.height = ''
+    document.body.style.touchAction = ''
+    this.canvas.style.touchAction = 'none'
+    this.ui.setGalleryComplete(false)
+    this.ui.setChapter('gallery')
+    if (!this.detachScrollLock) this.attachScrollLock()
+    ScrollTrigger.refresh()
   }
 
   private promptGesture(): void {
@@ -143,14 +208,41 @@ export class Experience {
   private bindInput(): void {
     this.detachGestures = attachSwipeGestures(this.app, {
       threshold: 48,
-      enabled: () => !document.documentElement.classList.contains('gallery-complete') && this.chapter === 'gallery',
+      enabled: () => !this.unlocked && this.chapter === 'gallery',
       onGesture: (dir) => {
+        if (this.unlocked) return
         const ok = this.gallery.tryGesture(dir, this.camera)
         if (!ok) this.gallery.shakeHint(this.gallery.group)
       },
     })
 
+    // After unlock, a deliberate swipe-up on the canvas also advances into the letter
+    // (belt-and-suspenders for devices that still struggle with native scroll).
+    let swipeStartY = 0
+    let swipeTracking = false
+    const onUnlockSwipeStart = (e: TouchEvent) => {
+      if (!this.unlocked || this.chapter !== 'gallery') return
+      if (e.touches.length !== 1) return
+      swipeTracking = true
+      swipeStartY = e.touches[0].clientY
+    }
+    const onUnlockSwipeEnd = (e: TouchEvent) => {
+      if (!swipeTracking || !this.unlocked || this.chapter !== 'gallery') return
+      swipeTracking = false
+      const endY = e.changedTouches[0]?.clientY ?? swipeStartY
+      const dy = swipeStartY - endY
+      if (dy > 64) this.scrollIntoJourney()
+    }
+    this.canvas.addEventListener('touchstart', onUnlockSwipeStart, { passive: true })
+    this.canvas.addEventListener('touchend', onUnlockSwipeEnd, { passive: true })
+
     const onKey = (e: KeyboardEvent) => {
+      if (this.unlocked) {
+        if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+          // allow native scroll
+        }
+        return
+      }
       if (this.chapter !== 'gallery') return
       const map: Record<string, GestureDirection> = {
         ArrowLeft: 'left',
@@ -202,20 +294,28 @@ export class Experience {
       () => window.removeEventListener('pointermove', onPointerMove),
       () => window.removeEventListener('pointerleave', onPointerLeave),
       () => window.removeEventListener('click', onClick),
+      () => this.canvas.removeEventListener('touchstart', onUnlockSwipeStart),
+      () => this.canvas.removeEventListener('touchend', onUnlockSwipeEnd),
     )
   }
 
-  private bindScrollCamera(): void {
+  private attachScrollLock(): void {
     const lock = (e: Event) => {
-      if (document.documentElement.classList.contains('gallery-complete')) return
+      if (this.unlocked) return
       e.preventDefault()
     }
     window.addEventListener('wheel', lock, { passive: false })
     window.addEventListener('touchmove', lock, { passive: false })
-    this.extraCleanup.push(
-      () => window.removeEventListener('wheel', lock),
-      () => window.removeEventListener('touchmove', lock),
-    )
+    this.detachScrollLock = () => {
+      window.removeEventListener('wheel', lock)
+      window.removeEventListener('touchmove', lock)
+      this.detachScrollLock = null
+    }
+  }
+
+  private bindScrollCamera(): void {
+    this.attachScrollLock()
+    this.extraCleanup.push(() => this.detachScrollLock?.())
 
     const cameraState = {
       x: 0,
@@ -230,11 +330,10 @@ export class Experience {
       end: 'bottom bottom',
       scrub: prefersReducedMotion() ? false : 1.1,
       onUpdate: (self) => {
-        if (!document.documentElement.classList.contains('gallery-complete')) return
+        if (!this.unlocked) return
         this.scrollProgress = self.progress
-        // 0-0.28 letter approach, 0.28-0.62 memories, 0.62-1 finale
         const p = self.progress
-                if (p < 0.33) {
+        if (p < 0.33) {
           const t = p / 0.33
           cameraState.z = THREE.MathUtils.lerp(5.2, -18, t)
           cameraState.y = THREE.MathUtils.lerp(0.15, 0.2, t)
@@ -294,8 +393,8 @@ export class Experience {
     this.memories.update(t)
     this.finale.update(t)
 
-    // Subtle idle drift in gallery
-    if (this.chapter === 'gallery' && !prefersReducedMotion()) {
+    // Subtle idle drift in gallery (before the journey unlocks)
+    if (!this.unlocked && this.chapter === 'gallery' && !prefersReducedMotion()) {
       this.camera.position.x += (this.pointer.x * 0.15 - this.camera.position.x) * 0.02
       this.camera.position.y += (0.15 + this.pointer.y * 0.08 - this.camera.position.y) * 0.02
       this.camera.lookAt(0, 0.1, 0)
