@@ -1,71 +1,50 @@
-# Happy Birthday — Interactive Website
+# Happy Birthday — Immersive Three.js Experience
 
-An immersive, cinematic birthday experience with gesture-driven photography, an editorial love letter, circular memory videos, and a drawn **HAPPY BIRTHDAY** finale.
+A cinematic WebGL birthday letter: one coordinated Three.js world with custom shaders, post-processing, GSAP/ScrollTrigger camera travel, gesture-driven photographic memory space, floating video portals, and a particle-formed **HAPPY BIRTHDAY** finale.
 
 **Live URL:** https://faiqali-dot.github.io/hbd-website/
 
-## How GitHub Pages is set up for this repo
+## GitHub Pages (branch root)
 
-Pages is configured as:
+**Settings → Pages → Deploy from a branch → `main` → `/ (root)`**
 
-**Settings → Pages → Deploy from a branch → Branch: `main` → Folder: `/ (root)`**
+Source lives in [`app/`](app/). Built static files (`index.html`, `assets/`, `favicon.svg`, `.nojekyll`) are committed at the repo root. Republish with:
 
-That means GitHub serves the **repository root as static files** (no build step). The Vite source therefore lives under [`app/`](app/), and the **built site** (`index.html`, `assets/`, `favicon.svg`, `.nojekyll`) is committed at the repo root.
+```bash
+cd app && npm install && npm run build:site
+```
 
-## Stack
+Or push `app/**` changes to `main` and let [`.github/workflows/publish-site.yml`](.github/workflows/publish-site.yml) rebuild the root.
 
-- Vite + TypeScript (in `app/`)
-- GSAP + ScrollTrigger
-- Optional sound (never autoplays)
+## Stack & architecture
 
-**Visual direction:** nocturne film letter — deep espresso charcoal, champagne gold, soft blush.
+- **Three.js** — single full-screen renderer (not decorative)
+- Custom **GLSL** photo reveals, atmosphere, circular masks, soft particles
+- **Post-processing** — bloom + vignette/grain (scaled by device tier)
+- **GSAP + ScrollTrigger** — gesture timelines + chapter camera path
+- HTML overlays for readable letter/UI only
+- Quality tiers + `prefers-reduced-motion` + non-WebGL fallback
 
-## Replace content (no component edits)
+**Visual direction:** Nocturne Memory Chamber — deep espresso void, champagne/rose-gold emissive light, translucent glass photo planes, atmospheric dust.
 
-Edit:
+Scene groups sit along Z; after the gallery unlocks, scroll scrubs the camera through letter → memory portals → finale.
 
-- [`app/src/content/config.ts`](app/src/content/config.ts)
+## Swap content
 
-Asset folders:
+[`app/src/content/config.ts`](app/src/content/config.ts)
 
 - `app/src/assets/images/gallery/`
 - `app/src/assets/images/circles/`
 - `app/src/assets/videos/memories/`
 - `app/src/assets/audio/`
 
-Then republish the root site:
-
-```bash
-cd app
-npm install
-npm run build:site
-```
-
-Commit the updated root `index.html` + `assets/` (and `.nojekyll`).  
-Or push changes under `app/` to `main` and let [`.github/workflows/publish-site.yml`](.github/workflows/publish-site.yml) rebuild and commit the root files.
-
-## Local development
+## Local
 
 ```bash
 cd app
 npm install
 npm run dev
+# Pages-like check:
+npm run build:site && npm run serve:pages
+# http://127.0.0.1:4173/hbd-website/
 ```
-
-## Verify the Pages layout locally
-
-Serves the **repo root** under `/hbd-website/` exactly like project Pages:
-
-```bash
-cd app
-npm run build:site
-npm run serve:pages
-# open http://127.0.0.1:4173/hbd-website/
-```
-
-## Experience notes
-
-1. **Gallery** — swipe (or arrow keys) with the illustrated hand. Scrolling stays locked until every photo is revealed. **Go back** undoes the last reveal.
-2. **Letter** — editorial paragraph with floating circular photos.
-3. **Memories** — four circular videos; hover on desktop, tap on mobile.
-4. **Finale** — drawn HAPPY BIRTHDAY typography.
