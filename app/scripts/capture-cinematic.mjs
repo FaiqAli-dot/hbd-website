@@ -34,11 +34,13 @@ async function runDesktop() {
     const key = gestures[i]
     const dir = key.replace('Arrow', '').toLowerCase()
     await page.keyboard.press(key)
-    // Mid-waypoint peaks ~0.45–0.55s into the flight
-    await page.waitForTimeout(480)
+    // Approach (~0.5s) then close-pass hold (~1.15s)
+    await page.waitForTimeout(500)
+    await shot(page, `cine-ch1-midflight-${String(i + 1).padStart(2, '0')}-${dir}-approach`)
+    await page.waitForTimeout(650)
     await shot(page, `cine-ch1-midflight-${String(i + 1).padStart(2, '0')}-${dir}`)
-    // Let settle finish
-    await page.waitForTimeout(1000)
+    // Let settle finish (~2.05s total)
+    await page.waitForTimeout(1100)
     if (i === 0 || i === 3 || i === 7) {
       await shot(page, `cine-ch1-settled-${String(i + 1).padStart(2, '0')}`)
     }
@@ -112,9 +114,9 @@ async function runDesktopVideo() {
   for (const key of gestures) {
     await page.mouse.move(200 + Math.random() * 900, 180 + Math.random() * 500)
     await page.keyboard.press(key)
-    await page.waitForTimeout(400)
+    await page.waitForTimeout(700)
     await page.mouse.move(400 + Math.random() * 700, 220 + Math.random() * 420)
-    await page.waitForTimeout(1050)
+    await page.waitForTimeout(1400)
   }
   await page.waitForTimeout(400)
   const cont = page.locator('button:has-text("Continue")')
@@ -186,9 +188,9 @@ async function runMobileVideo() {
   const dirs = ['left', 'right', 'up', 'down', 'left', 'right', 'up', 'down']
   for (let i = 0; i < dirs.length; i++) {
     await swipe(dirs[i])
-    await page.waitForTimeout(280)
+    await page.waitForTimeout(1000)
     if (i < 4) await shot(page, `cine-mobile-midflight-${dirs[i]}-${i}`)
-    await page.waitForTimeout(1100)
+    await page.waitForTimeout(1200)
   }
   await shot(page, 'cine-mobile-collage')
 

@@ -8,6 +8,14 @@ import { photoPlaneFragment, photoPlaneVertex } from '../shaders'
 import { prefersReducedMotion } from '../../utils/motion'
 import { sound } from '../../components/sound'
 import { detectQuality, textureMaxSize } from '../../utils/quality'
+import {
+  approachPose,
+  closePassPose,
+  collagePose,
+  entryPose,
+  focusPose,
+  seed,
+} from './flightPoses'
 
 interface PhotoPlane {
   mesh: THREE.Mesh
@@ -16,154 +24,7 @@ interface PhotoPlane {
   settled: boolean
 }
 
-interface Pose {
-  x: number
-  y: number
-  z: number
-  rx: number
-  ry: number
-  rz: number
-  s: number
-}
-
-/** Deterministic hash so each photo gets a stable unique path */
-function seed(i: number): number {
-  const x = Math.sin(i * 12.9898 + 78.233) * 43758.5453
-  return x - Math.floor(x)
-}
-
-/** Far off-frustum start — varies by photo, not only by gesture */
-function entryPose(dir: GestureDirection, i: number): Pose {
-  const r = seed(i)
-  const r2 = seed(i + 17)
-  const depth = -6.5 - r * 5.5
-  const scale = 0.35 + r2 * 0.4
-  switch (dir) {
-    case 'left':
-      return {
-        x: 8.5 + r * 2.8,
-        y: -1.8 + r2 * 3.5,
-        z: depth,
-        rx: 0.15 + r * 0.4,
-        ry: -0.75 - r2 * 0.4,
-        rz: 0.2 - r * 0.35,
-        s: Math.max(0.75, scale),
-      }
-    case 'right':
-      return {
-        x: -8.8 - r * 2.8,
-        y: -1.6 + r2 * 3.6,
-        z: depth,
-        rx: -0.2 - r * 0.3,
-        ry: 0.85 + r2 * 0.55,
-        rz: -0.18 + r * 0.3,
-        s: scale,
-      }
-    case 'up':
-      return {
-        x: -3.2 + r * 6.5,
-        y: -7.2 - r2 * 2.2,
-        z: depth + 0.5,
-        rx: 1.1 + r * 0.35,
-        ry: -0.35 + r2 * 0.7,
-        rz: 0.15 - r * 0.4,
-        s: scale,
-      }
-    case 'down':
-      return {
-        x: -3.0 + r * 6.0,
-        y: 7.4 + r2 * 2.0,
-        z: depth + 0.4,
-        rx: -1.05 - r * 0.3,
-        ry: 0.3 - r2 * 0.6,
-        rz: -0.12 + r * 0.35,
-        s: scale,
-      }
-  }
-}
-
-/**
- * Mid-flight waypoint: come CLOSE to camera with strong perspective tilt
- * so travel reads as Z-depth, not a flat 2D slide.
- */
-function midPose(dir: GestureDirection, i: number): Pose {
-  const r = seed(i + 3)
-  const r2 = seed(i + 11)
-  const base: Record<GestureDirection, Pose> = {
-    left: {
-      x: 1.8 + r * 0.9,
-      y: -0.45 + r2 * 1.0,
-      z: 1.35 + r * 0.45,
-      rx: 0.35 + r * 0.2,
-      ry: -0.85 - r2 * 0.25,
-      rz: 0.28,
-      s: 1.15 + r * 0.2,
-    },
-    right: {
-      x: -2.0 - r * 0.85,
-      y: 0.35 - r2 * 0.95,
-      z: 1.4 + r * 0.4,
-      rx: -0.3 - r * 0.15,
-      ry: 0.8 + r2 * 0.3,
-      rz: -0.25,
-      s: 1.12 + r * 0.22,
-    },
-    up: {
-      x: -0.9 + r * 2.0,
-      y: -1.35 - r2 * 0.4,
-      z: 1.55 + r * 0.35,
-      rx: 0.85 + r * 0.2,
-      ry: 0.25 - r2 * 0.4,
-      rz: 0.18,
-      s: 1.2 + r * 0.15,
-    },
-    down: {
-      x: 0.85 - r * 1.9,
-      y: 1.45 + r2 * 0.4,
-      z: 1.5 + r * 0.35,
-      rx: -0.8 - r * 0.15,
-      ry: -0.2 + r2 * 0.35,
-      rz: -0.16,
-      s: 1.18 + r * 0.16,
-    },
-  }
-  return base[dir]
-}
-
-/** Unique final focal placement — never a shared center landing */
-function focusPose(i: number): Pose {
-  const r = seed(i)
-  const r2 = seed(i + 29)
-  const r3 = seed(i + 41)
-  // Spread landings across a shallow arc in front of camera
-  const slot = i % 8
-  const arc = ((slot / 7) - 0.5) * 2.4
-  return {
-    x: arc + (r - 0.5) * 0.55,
-    y: -0.35 + r2 * 0.9 + (slot % 2 === 0 ? 0.15 : -0.1),
-    z: -0.35 + r3 * 0.85 - (slot % 3) * 0.12,
-    rx: (r - 0.5) * 0.22,
-    ry: (r2 - 0.5) * 0.35,
-    rz: (r3 - 0.5) * 0.12,
-    s: 0.88 + r * 0.28,
-  }
-}
-
-function collagePose(slot: number): Pose {
-  const r = seed(slot + 7)
-  const r2 = seed(slot + 19)
-  const angle = slot * 0.92 + r * 0.6
-  const radius = 1.7 + (slot % 4) * 0.55 + r2 * 0.4
-  return {
-    x: Math.cos(angle) * radius + (r - 0.5) * 0.4,
-    y: Math.sin(angle * 0.85) * (1.0 + r * 0.6) + (slot % 2 === 0 ? 0.55 : -0.45),
-    z: -1.2 - slot * 0.48 - r2 * 0.7,
-    rx: -0.18 + r * 0.25,
-    ry: Math.cos(angle) * (0.35 + r * 0.3),
-    rz: Math.sin(angle) * 0.18 + (r2 - 0.5) * 0.1,
-    s: 0.42 + (1 - Math.min(slot, 7) / 7) * 0.22 + r * 0.08,
-  }
-}
+export type RevealCam = { x: number; y: number; z: number }
 
 function placeholderTexture(): THREE.DataTexture {
   const data = new Uint8Array([36, 28, 22, 255])
@@ -180,15 +41,14 @@ function fitTexture(tex: THREE.Texture, maxEdge: number): void {
   if (!w || !h) return
   const longest = Math.max(w, h)
   if (longest <= maxEdge) return
-  // Let GPU downsample via minFilter; mark anisotropy lightly
   tex.generateMipmaps = true
   tex.minFilter = THREE.LinearMipmapLinearFilter
   tex.anisotropy = 1
 }
 
 /**
- * Chapter 1 — photographs as physical planes that fly through real 3D space.
- * Each photo has a unique trajectory, scale, depth, rotation, and landing.
+ * Chapter 1 — photographs rush through deep 3D space.
+ * GSAP owns `revealCam` offsets only; Experience layers parallax on top.
  */
 export class GalleryWorld {
   readonly group = new THREE.Group()
@@ -263,8 +123,8 @@ export class GalleryWorld {
       fragmentShader: photoPlaneFragment,
     })
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h, 16, 24), mat)
-    mesh.position.set(14, 10, -10)
-    mesh.scale.setScalar(0.85)
+    mesh.position.set(14, 10, -24)
+    mesh.scale.setScalar(0.2)
     mesh.visible = false
     this.group.add(mesh)
     const plane: PhotoPlane = { mesh, material: mat, index: i, settled: false }
@@ -298,11 +158,35 @@ export class GalleryWorld {
     return this.planes.filter((p) => p?.settled).map((p) => p.mesh)
   }
 
+  /** Settled planes with live textures — for continuous Ch1→Ch2 morph */
+  getSettledHandoff(): Array<{
+    worldPos: THREE.Vector3
+    texture: THREE.Texture
+    scale: number
+    rotation: THREE.Euler
+  }> {
+    return this.planes
+      .filter((p) => p?.settled)
+      .map((p) => {
+        const worldPos = new THREE.Vector3()
+        p.mesh.getWorldPosition(worldPos)
+        return {
+          worldPos,
+          texture: (p.material.uniforms.uMap.value as THREE.Texture) ?? this.textures[p.index],
+          scale: p.mesh.scale.x,
+          rotation: p.mesh.rotation.clone(),
+        }
+      })
+  }
+
   isRevealing(): boolean {
     return this.revealing
   }
 
-  tryGesture(direction: GestureDirection, camera: THREE.PerspectiveCamera): boolean {
+  /**
+   * @param revealCam — GSAP-owned camera offset; Experience adds parallax on top.
+   */
+  tryGesture(direction: GestureDirection, revealCam: RevealCam): boolean {
     if (this.revealing || this.complete) return false
     const photo = galleryPhotos[this.index]
     if (!photo || photo.gesture !== direction) return false
@@ -311,7 +195,8 @@ export class GalleryWorld {
     const i = this.index
     const plane = this.createPlane(i)
     const start = entryPose(direction, i)
-    const mid = midPose(direction, i)
+    const approach = approachPose(direction, i)
+    const close = closePassPose(direction, i)
     const focus = focusPose(i)
     const reduced = prefersReducedMotion()
 
@@ -321,7 +206,7 @@ export class GalleryWorld {
     plane.mesh.scale.setScalar(start.s)
     plane.material.uniforms.uOpacity.value = 0
     plane.material.uniforms.uDistort.value = 1
-    plane.material.uniforms.uRgbSplit.value = 0.55
+    plane.material.uniforms.uRgbSplit.value = 0.65
 
     sound.play('reveal', 0.42)
 
@@ -336,35 +221,30 @@ export class GalleryWorld {
           prev.mesh.scale.setScalar(c.s)
           prev.material.uniforms.uOpacity.value = 0.78
         } else {
-          const retreat = {
-            x: start.x * -0.25,
-            y: start.y * -0.2,
-            z: c.z * 0.4,
-          }
           gsap.to(prev.mesh.position, {
-            x: retreat.x,
-            y: retreat.y,
-            z: retreat.z,
-            duration: 0.5,
+            x: c.x * 0.4,
+            y: c.y * 0.4,
+            z: -4,
+            duration: 0.55,
             ease: 'power2.in',
           })
           gsap.to(prev.mesh.position, {
             x: c.x,
             y: c.y,
             z: c.z,
-            duration: 0.95,
-            delay: 0.35,
+            duration: 1.05,
+            delay: 0.4,
             ease: 'power3.out',
           })
           gsap.to(prev.mesh.rotation, {
             x: c.rx,
             y: c.ry,
             z: c.rz,
-            duration: 1.15,
+            duration: 1.3,
             ease: 'power2.out',
           })
-          gsap.to(prev.mesh.scale, { x: c.s, y: c.s, z: c.s, duration: 1.05, ease: 'power2.out' })
-          gsap.to(prev.material.uniforms.uOpacity, { value: 0.7, duration: 0.85 })
+          gsap.to(prev.mesh.scale, { x: c.s, y: c.s, z: c.s, duration: 1.15, ease: 'power2.out' })
+          gsap.to(prev.material.uniforms.uOpacity, { value: 0.68, duration: 0.9 })
           gsap.to(prev.material.uniforms.uRgbSplit, { value: 0, duration: 0.45 })
         }
       }
@@ -396,129 +276,131 @@ export class GalleryWorld {
       return true
     }
 
-    const camOrigin = {
-      x: camera.position.x,
-      y: camera.position.y,
-      z: camera.position.z,
-    }
-    // Camera participates — nudge opposite the incoming flight + slight dolly
+    // Camera offset opposite the rush + dolly as the plane passes close
     const camNudge = {
-      x: direction === 'left' ? 0.55 : direction === 'right' ? -0.55 : (seed(i) - 0.5) * 0.4,
-      y: direction === 'up' ? 0.42 : direction === 'down' ? -0.38 : 0.08 + seed(i + 2) * 0.12,
-      // Dolly in as the plane rushes past the mid waypoint
-      z: camOrigin.z - 0.85 - seed(i) * 0.45,
+      x: direction === 'left' ? 0.72 : direction === 'right' ? -0.72 : (seed(i) - 0.5) * 0.5,
+      y: direction === 'up' ? 0.55 : direction === 'down' ? -0.48 : 0.1 + seed(i + 2) * 0.14,
+      z: -1.15 - seed(i) * 0.55,
     }
 
     const tl = gsap.timeline()
 
-    // Phase 1: enter frustum — mid-flight (visible travel through space)
+    // Phase 1 (0–0.7s): deep → approach — long visible arc from far Z
     tl.to(
       plane.mesh.position,
-      {
-        x: mid.x,
-        y: mid.y,
-        z: mid.z,
-        duration: 0.55,
-        ease: 'power3.in',
-      },
+      { x: approach.x, y: approach.y, z: approach.z, duration: 0.7, ease: 'power2.in' },
       0,
     )
     tl.to(
       plane.mesh.rotation,
-      { x: mid.rx, y: mid.ry, z: mid.rz, duration: 0.55, ease: 'power2.in' },
+      { x: approach.rx, y: approach.ry, z: approach.rz, duration: 0.7, ease: 'power2.in' },
       0,
-    )
-    tl.to(plane.mesh.scale, { x: mid.s, y: mid.s, z: mid.s, duration: 0.5, ease: 'power2.out' }, 0)
-    // Opacity early so mid-flight frames clearly show the traveling plane
-    tl.to(plane.material.uniforms.uOpacity, { value: 1, duration: 0.16, ease: 'power2.out' }, 0)
-    tl.to(plane.material.uniforms.uDistort, { value: 0.4, duration: 0.4 }, 0)
-    tl.to(
-      camera.position,
-      {
-        x: camOrigin.x + camNudge.x,
-        y: camOrigin.y + camNudge.y,
-        z: camNudge.z,
-        duration: 0.55,
-        ease: 'power2.out',
-      },
-      0,
-    )
-
-    // Phase 2: sweep past mid toward overshoot near focus
-    tl.to(
-      plane.mesh.position,
-      {
-        x: focus.x * 1.12 + mid.x * 0.08,
-        y: focus.y * 1.1 + mid.y * 0.05,
-        z: focus.z + 0.35,
-        duration: 0.55,
-        ease: 'power2.out',
-      },
-      0.5,
-    )
-    tl.to(
-      plane.mesh.rotation,
-      {
-        x: focus.rx + mid.rx * 0.2,
-        y: focus.ry + mid.ry * 0.25,
-        z: focus.rz,
-        duration: 0.6,
-        ease: 'power2.out',
-      },
-      0.5,
     )
     tl.to(
       plane.mesh.scale,
-      { x: focus.s * 1.08, y: focus.s * 1.08, z: 1, duration: 0.5, ease: 'power2.out' },
-      0.5,
+      { x: approach.s, y: approach.s, z: approach.s, duration: 0.65, ease: 'power2.out' },
+      0,
+    )
+    tl.to(plane.material.uniforms.uOpacity, { value: 1, duration: 0.22, ease: 'power2.out' }, 0.05)
+    tl.to(plane.material.uniforms.uDistort, { value: 0.55, duration: 0.5 }, 0)
+    tl.to(
+      revealCam,
+      { x: camNudge.x * 0.55, y: camNudge.y * 0.55, z: camNudge.z * 0.4, duration: 0.7, ease: 'power2.out' },
+      0,
     )
 
-    // Phase 3: settle into unique landing
+    // Phase 2 (0.65–1.35s): rush into close pass and HOLD — fills frame
     tl.to(
       plane.mesh.position,
-      { x: focus.x, y: focus.y, z: focus.z, duration: 0.55, ease: 'back.out(1.6)' },
-      0.95,
+      { x: close.x, y: close.y, z: close.z, duration: 0.55, ease: 'power3.in' },
+      0.65,
+    )
+    tl.to(
+      plane.mesh.rotation,
+      { x: close.rx, y: close.ry, z: close.rz, duration: 0.55, ease: 'power2.in' },
+      0.65,
+    )
+    tl.to(
+      plane.mesh.scale,
+      { x: close.s, y: close.s, z: close.s, duration: 0.5, ease: 'power2.out' },
+      0.65,
+    )
+    tl.to(
+      revealCam,
+      { x: camNudge.x, y: camNudge.y, z: camNudge.z, duration: 0.5, ease: 'power2.in' },
+      0.65,
+    )
+    tl.to(plane.material.uniforms.uRgbSplit, { value: 0.4, duration: 0.3 }, 0.7)
+    // Brief hold so mid-flight evidence / perception catch the rush
+    tl.to(plane.mesh.position, { z: close.z + 0.12, duration: 0.28, ease: 'sine.inOut' }, 1.15)
+
+    // Phase 3 (1.4–2.15s): overshoot past camera then settle into unique landing
+    tl.to(
+      plane.mesh.position,
+      {
+        x: focus.x * 1.15,
+        y: focus.y * 1.1,
+        z: focus.z + 0.55,
+        duration: 0.55,
+        ease: 'power2.out',
+      },
+      1.4,
+    )
+    tl.to(
+      plane.mesh.rotation,
+      {
+        x: focus.rx + close.rx * 0.15,
+        y: focus.ry + close.ry * 0.2,
+        z: focus.rz,
+        duration: 0.55,
+        ease: 'power2.out',
+      },
+      1.4,
+    )
+    tl.to(
+      plane.mesh.scale,
+      { x: focus.s * 1.1, y: focus.s * 1.1, z: 1, duration: 0.5, ease: 'power2.out' },
+      1.4,
+    )
+
+    tl.to(
+      plane.mesh.position,
+      { x: focus.x, y: focus.y, z: focus.z, duration: 0.55, ease: 'back.out(1.55)' },
+      1.85,
     )
     tl.to(
       plane.mesh.rotation,
       { x: focus.rx, y: focus.ry, z: focus.rz, duration: 0.55, ease: 'power3.out' },
-      0.95,
+      1.85,
     )
     tl.to(
       plane.mesh.scale,
-      { x: focus.s, y: focus.s, z: 1, duration: 0.5, ease: 'back.out(1.35)' },
-      0.95,
+      { x: focus.s, y: focus.s, z: 1, duration: 0.5, ease: 'back.out(1.3)' },
+      1.85,
     )
-    tl.to(plane.material.uniforms.uDistort, { value: 0, duration: 0.5, ease: 'power2.out' }, 0.85)
-    tl.to(plane.material.uniforms.uRgbSplit, { value: 0, duration: 0.4 }, 0.9)
-    // Soft return — leave a residual offset so idle parallax stays alive
+    tl.to(plane.material.uniforms.uDistort, { value: 0, duration: 0.55, ease: 'power2.out' }, 1.7)
+    tl.to(plane.material.uniforms.uRgbSplit, { value: 0, duration: 0.45 }, 1.75)
     tl.to(
-      camera.position,
-      {
-        x: camNudge.x * 0.15,
-        y: 0.15 + camNudge.y * 0.2,
-        z: 5.2,
-        duration: 0.75,
-        ease: 'power3.out',
-      },
-      0.95,
+      revealCam,
+      { x: camNudge.x * 0.12, y: camNudge.y * 0.12, z: 0, duration: 0.8, ease: 'power3.out' },
+      1.8,
     )
-    // Unlock progress once the plane has clearly travelled through mid-space
-    tl.add(finish, 1.2)
+    // Progress unlocks after the close-pass has been visible
+    tl.add(finish, 2.05)
 
     tl.to(
       plane.mesh.rotation,
       { y: focus.ry + 0.04, duration: 1.1, ease: 'sine.inOut', yoyo: true, repeat: 1 },
-      1.25,
+      1.9,
     )
 
     return true
   }
 
-  undo(camera: THREE.PerspectiveCamera): boolean {
+  undo(revealCam: RevealCam): boolean {
     if (this.history.length === 0) return false
     this.revealing = false
-    gsap.killTweensOf(camera.position)
+    gsap.killTweensOf(revealCam)
     const last = this.history.pop()
     if (last === undefined) return false
     this.seen.delete(last)
@@ -544,7 +426,7 @@ export class GalleryWorld {
         x: out.x,
         y: out.y,
         z: out.z,
-        duration: 0.4,
+        duration: 0.45,
         ease: 'power2.in',
       })
     }
@@ -566,7 +448,7 @@ export class GalleryWorld {
       }
     }
 
-    gsap.to(camera.position, { x: 0, y: 0.15, z: 5.2, duration: 0.4, ease: 'power2.out' })
+    gsap.to(revealCam, { x: 0, y: 0, z: 0, duration: 0.4, ease: 'power2.out' })
     sound.play('transition', 0.25)
     return true
   }
@@ -577,8 +459,8 @@ export class GalleryWorld {
   }
 
   /**
-   * Continuous morph into chapter 2: planes fly toward letter-space disc targets
-   * and dissolve as circular photo discs take over.
+   * Continuous morph into chapter 2: planes fly to disc targets while
+   * circularizing (soft edge ↑, scale → disc), then dissolve as discs take over.
    */
   morphIntoLetter(
     discWorldTargets: Array<{ x: number; y: number; z: number }>,
@@ -587,34 +469,39 @@ export class GalleryWorld {
     const settled = this.planes.filter((p) => p?.settled)
     settled.forEach((p, i) => {
       const target = discWorldTargets[i % discWorldTargets.length]
-      // Convert world target into gallery-local space (gallery at origin)
       tl.to(
         p.mesh.position,
         {
           x: target.x,
           y: target.y,
           z: target.z,
-          duration: 1.45,
+          duration: 1.65,
           ease: 'power3.inOut',
         },
-        i * 0.04,
+        i * 0.035,
       )
+      // Circularize: shrink rectangular silhouette toward disc scale
       tl.to(
         p.mesh.scale,
-        { x: 0.28, y: 0.28, z: 1, duration: 1.25, ease: 'power2.inOut' },
-        i * 0.04,
+        { x: 0.55, y: 0.55, z: 1, duration: 1.4, ease: 'power2.inOut' },
+        i * 0.035,
       )
       tl.to(
         p.mesh.rotation,
-        { x: 0, y: 0, z: (seed(i) - 0.5) * 0.4, duration: 1.2, ease: 'power2.inOut' },
-        i * 0.04,
+        { x: 0, y: 0, z: (seed(i) - 0.5) * 0.25, duration: 1.35, ease: 'power2.inOut' },
+        i * 0.035,
       )
-      tl.to(p.material.uniforms.uOpacity, { value: 0, duration: 0.85, ease: 'power2.in' }, 0.55 + i * 0.04)
+      tl.to(p.material.uniforms.uSoftEdge, { value: 0.48, duration: 1.1, ease: 'power2.in' }, 0.2 + i * 0.035)
+      // Hand off — fade only after discs have taken opacity
+      tl.to(
+        p.material.uniforms.uOpacity,
+        { value: 0, duration: 0.7, ease: 'power2.in' },
+        0.95 + i * 0.035,
+      )
     })
     return tl
   }
 
-  /** @deprecated prefer morphIntoLetter — kept for call-site safety */
   gatherForLetter(): gsap.core.Timeline {
     return this.morphIntoLetter(
       Array.from({ length: 6 }, (_, i) => ({

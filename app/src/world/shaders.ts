@@ -80,10 +80,12 @@ void main() {
 export const softParticleVertex = /* glsl */ `
 attribute float aScale;
 attribute float aSeed;
+attribute vec3 aColor;
 uniform float uTime;
 uniform float uPixelRatio;
 uniform float uSize;
 varying float vAlpha;
+varying vec3 vColor;
 void main() {
   vec3 p = position;
   p.y += sin(uTime * 0.4 + aSeed * 6.28) * 0.15;
@@ -92,18 +94,22 @@ void main() {
   gl_Position = projectionMatrix * mv;
   gl_PointSize = aScale * uSize * uPixelRatio * (1.0 / max(0.4, -mv.z));
   vAlpha = smoothstep(0.0, 1.0, aScale);
+  vColor = aColor;
 }
 `
 
 export const softParticleFragment = /* glsl */ `
 uniform vec3 uColor;
+uniform float uColorMix;
 varying float vAlpha;
+varying vec3 vColor;
 void main() {
   vec2 c = gl_PointCoord - 0.5;
   float d = length(c);
   float alpha = smoothstep(0.5, 0.0, d) * vAlpha * 0.55;
   if (alpha < 0.01) discard;
-  gl_FragColor = vec4(uColor, alpha);
+  vec3 col = mix(vColor, uColor, clamp(uColorMix, 0.0, 1.0));
+  gl_FragColor = vec4(col, alpha);
 }
 `
 

@@ -43,10 +43,17 @@ export class Atmosphere {
       scales[i] = 0.35 + Math.random() * 1.4
       seeds[i] = Math.random()
     }
+    const colors = new Float32Array(budget * 3)
+    for (let i = 0; i < budget; i++) {
+      colors[i * 3] = 0.91
+      colors[i * 3 + 1] = 0.79
+      colors[i * 3 + 2] = 0.63
+    }
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geo.setAttribute('aScale', new THREE.BufferAttribute(scales, 1))
     geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1))
+    geo.setAttribute('aColor', new THREE.BufferAttribute(colors, 3))
 
     this.dustMat = new THREE.ShaderMaterial({
       transparent: true,
@@ -59,6 +66,7 @@ export class Atmosphere {
         uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
         uSize: { value: tier === 'low' ? 28 : 42 },
         uColor: { value: new THREE.Color('#e8c9a0') },
+        uColorMix: { value: 1 },
       },
     })
     this.dust = new THREE.Points(geo, this.dustMat)

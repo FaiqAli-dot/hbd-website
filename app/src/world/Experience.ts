@@ -55,6 +55,8 @@ export class Experience {
   private adaptiveDpr: AdaptiveDpr
   private lastFrameMs = 16.7
   private cameraBase = { x: 0, y: 0.15, z: 5.2, lookY: 0 }
+  /** GSAP-owned reveal offset — parallax is layered on top every frame */
+  private revealCam = { x: 0, y: 0, z: 0 }
 
   constructor(app: HTMLElement) {
     this.app = app
@@ -77,7 +79,7 @@ export class Experience {
 
     this.adaptiveDpr = new AdaptiveDpr(maxPixelRatio(this.tier), this.tier === 'low' ? 0.7 : 0.85)
 
-    this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 120)
+    this.camera = new THREE.PerspectiveCamera(44, 1, 0.08, 140)
     this.camera.position.set(0, 0.15, 5.2)
 
     this.atmosphere = new Atmosphere(this.tier)
@@ -112,7 +114,7 @@ export class Experience {
     this.promptGesture()
 
     this.ui.onUndo(() => {
-      if (this.gallery.undo(this.camera)) {
+      if (this.gallery.undo(this.revealCam)) {
         const p = this.gallery.getProgress()
         this.ui.setProgress(p.seen, p.total)
         if (this.unlocked) this.relockGallery()
@@ -261,7 +263,7 @@ export class Experience {
       enabled: () => !this.unlocked && this.chapter === 'gallery',
       onGesture: (dir) => {
         if (this.unlocked) return
-        const ok = this.gallery.tryGesture(dir, this.camera)
+        const ok = this.gallery.tryGesture(dir, this.revealCam)
         if (!ok) this.gallery.shakeHint(this.gallery.group)
       },
     })
@@ -296,7 +298,7 @@ export class Experience {
       const dir = map[e.key]
       if (!dir) return
       e.preventDefault()
-      this.gallery.tryGesture(dir, this.camera)
+      this.gallery.tryGesture(dir, this.revealCam)
     }
     window.addEventListener('keydown', onKey)
 
@@ -409,15 +411,12 @@ export class Experience {
     if (chapter === 'letter' && !this.transitionFlags.toLetter) {
       this.transitionFlags.toLetter = true
       const targets = this.letter.getDiscWorldTargets()
-      const photoWorld = this.gallery.getSettledMeshes().map((m) => {
-        const v = new THREE.Vector3()
-        m.getWorldPosition(v)
-        return v
-      })
+      const handoff = this.gallery.getSettledHandoff()
+      // Discs inherit photo textures/poses first, then planes morph into them
+      this.letter.playContinuousFromPhotos(handoff)
       if (!prefersReducedMotion()) {
         this.gallery.morphIntoLetter(targets)
       }
-      this.letter.playEntranceFrom(photoWorld)
       this.revealLetterText()
     }
 
@@ -432,8 +431,9 @@ export class Experience {
     if (chapter === 'finale' && !this.transitionFlags.toFinale) {
       this.transitionFlags.toFinale = true
       const worldPos = this.memories.getWorldPositions()
-      // Particles seeded at portals → morph into letters; portals + discs dissolve in parallel
-      this.finale.playFromPortals(worldPos)
+      const colors = this.memories.samplePortalColors(128)
+      // Particles carry sampled portal pixels → morph into letters
+      this.finale.playFromPortals(worldPos, colors)
       this.memories.dissolve()
       this.letter.dissolveForFinale()
     }
@@ -490,33 +490,36 @@ export class Experience {
     this.memories.update(t)
     this.finale.update(t)
 
-    // Camera parallax: pointer + gyro + scroll-tied base
+    // Camera: home + GSAP reveal offset + pointer/gyro/idle — always additive
     const reduced = prefersReducedMotion()
-    const parallaxX = reduced ? 0 : this.pointer.x * 0.18 + this.gyro.x * 0.22
-    const parallaxY = reduced ? 0 : this.pointer.y * 0.1 + this.gyro.y * 0.16
+    const parallaxX = reduced ? 0 : this.pointer.x * 0.22 + this.gyro.x * 0.28
+    const parallaxY = reduced ? 0 : this.pointer.y * 0.14 + this.gyro.y * 0.2
+    const breathX = reduced ? 0 : Math.sin(t * 0.45) * 0.1
+    const breathY = reduced ? 0 : Math.cos(t * 0.32) * 0.07
+    const breathZ = reduced ? 0 : Math.sin(t * 0.28) * 0.18
 
     if (!this.unlocked && this.chapter === 'gallery') {
-      // Idle breathing + pointer/gyro so the void never feels locked
-      if (!this.gallery.isRevealing()) {
-        const breath = reduced ? 0 : Math.sin(t * 0.45) * 0.1
-        const tx = parallaxX * 1.05 + breath
-        const ty = 0.15 + parallaxY * 0.7 + Math.cos(t * 0.32) * 0.07
-        const tz = 5.2 + Math.sin(t * 0.28) * 0.22 + parallaxY * 0.12
-        this.camera.position.x += (tx - this.camera.position.x) * 0.06
-        this.camera.position.y += (ty - this.camera.position.y) * 0.06
-        this.camera.position.z += (tz - this.camera.position.z) * 0.05
-        this.camera.lookAt(parallaxX * 0.7, 0.12 + parallaxY * 0.35, -0.5)
-      }
-    } else if (this.unlocked) {
-      const tx = this.cameraBase.x + parallaxX * 0.35
-      const ty = this.cameraBase.y + parallaxY * 0.25
-      const tz = this.cameraBase.z
-      this.camera.position.x += (tx - this.camera.position.x) * 0.08
-      this.camera.position.y += (ty - this.camera.position.y) * 0.08
-      this.camera.position.z += (tz - this.camera.position.z) * 0.1
+      const tx = 0 + this.revealCam.x + parallaxX * 1.1 + breathX
+      const ty = 0.15 + this.revealCam.y + parallaxY * 0.75 + breathY
+      const tz = 5.2 + this.revealCam.z + breathZ + parallaxY * 0.1
+      this.camera.position.x = tx
+      this.camera.position.y = ty
+      this.camera.position.z = tz
       this.camera.lookAt(
-        parallaxX * 0.4,
-        this.cameraBase.lookY + parallaxY * 0.15,
+        parallaxX * 0.75 + this.revealCam.x * 0.3,
+        0.12 + parallaxY * 0.4 + this.revealCam.y * 0.25,
+        -0.5 + this.revealCam.z * 0.4,
+      )
+    } else if (this.unlocked) {
+      const tx = this.cameraBase.x + parallaxX * 0.4 + breathX * 0.35
+      const ty = this.cameraBase.y + parallaxY * 0.3 + breathY * 0.35
+      const tz = this.cameraBase.z + breathZ * 0.25
+      this.camera.position.x += (tx - this.camera.position.x) * 0.1
+      this.camera.position.y += (ty - this.camera.position.y) * 0.1
+      this.camera.position.z += (tz - this.camera.position.z) * 0.12
+      this.camera.lookAt(
+        parallaxX * 0.45,
+        this.cameraBase.lookY + parallaxY * 0.18,
         this.camera.position.z - 6,
       )
     }

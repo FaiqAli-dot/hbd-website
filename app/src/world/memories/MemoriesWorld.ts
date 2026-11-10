@@ -116,9 +116,83 @@ export class MemoriesWorld {
     })
   }
 
+  /**
+   * Sample RGB colors from each portal's video/texture frame so finale
+   * particles are visibly built from memory pixels.
+   */
+  samplePortalColors(perPortal = 96): Float32Array[] {
+    const canvas = document.createElement('canvas')
+    canvas.width = 48
+    canvas.height = 48
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
+    return this.portals.map((p, portalIdx) => {
+      const out = new Float32Array(perPortal * 3)
+      // Distinct saturated fallbacks per portal if decode isn't ready
+      const fallbacks = [
+        [0.95, 0.45, 0.25],
+        [0.35, 0.65, 0.95],
+        [0.9, 0.35, 0.55],
+        [0.45, 0.85, 0.55],
+      ]
+      const fb = fallbacks[portalIdx % fallbacks.length]
+      for (let i = 0; i < perPortal; i++) {
+        out[i * 3] = fb[0]
+        out[i * 3 + 1] = fb[1]
+        out[i * 3 + 2] = fb[2]
+      }
+      if (!ctx) return out
+      try {
+        if (p.video.readyState < 2) {
+          p.video.preload = 'auto'
+          p.video.load()
+          // Kick a frame if possible
+          void p.video.play().then(() => p.video.pause()).catch(() => undefined)
+        }
+        const src: CanvasImageSource | null =
+          p.video.readyState >= 2
+            ? p.video
+            : (p.texture.image as CanvasImageSource | undefined) ?? null
+        if (!src) return out
+        ctx.clearRect(0, 0, 48, 48)
+        ctx.drawImage(src as CanvasImageSource, 0, 0, 48, 48)
+        const data = ctx.getImageData(0, 0, 48, 48).data
+        let wrote = 0
+        for (let i = 0; i < perPortal; i++) {
+          const angle = (i / perPortal) * Math.PI * 2
+          const rad = 6 + (i % 9) * 1.7
+          const x = Math.min(47, Math.max(0, Math.round(24 + Math.cos(angle) * rad)))
+          const y = Math.min(47, Math.max(0, Math.round(24 + Math.sin(angle) * rad)))
+          const idx = (y * 48 + x) * 4
+          const r = data[idx] / 255
+          const g = data[idx + 1] / 255
+          const b = data[idx + 2] / 255
+          // Skip near-black samples (empty portal / underexposed)
+          if (r + g + b < 0.12) continue
+          // Slight saturation boost so colors survive particle blending
+          const max = Math.max(r, g, b)
+          const boost = max > 0.01 ? Math.min(1.35, 0.55 / max + 0.65) : 1
+          out[wrote * 3] = Math.min(1, r * boost)
+          out[wrote * 3 + 1] = Math.min(1, g * boost)
+          out[wrote * 3 + 2] = Math.min(1, b * boost)
+          wrote++
+        }
+      } catch {
+        // CORS / decode — keep saturated fallbacks
+      }
+      return out
+    })
+  }
+
   playEntrance(): void {
     if (this.entered) return
     this.entered = true
+    // Warm video decode so portal color sampling has real frames
+    this.portals.forEach((p) => {
+      if (p.video.preload === 'none') {
+        p.video.preload = 'auto'
+        p.video.load()
+      }
+    })
     this.portals.forEach((p, i) => {
       gsap.to(p.group.position, {
         x: p.rest.x,

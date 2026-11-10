@@ -10,6 +10,7 @@ export class LetterWorld {
   private rims: THREE.Mesh[] = []
   private loader = new THREE.TextureLoader()
   private revealed = false
+  private circleTextures: Array<THREE.Texture | null> = []
 
   constructor() {
     this.group.position.set(0, 0, -22)
@@ -25,6 +26,7 @@ export class LetterWorld {
 
     circlePhotos.forEach((photo, i) => {
       const place = placements[i] ?? placements[0]
+      this.circleTextures[i] = null
       const mat = new THREE.ShaderMaterial({
         transparent: true,
         depthWrite: false,
@@ -39,7 +41,6 @@ export class LetterWorld {
       })
       this.mats.push(mat)
       const mesh = new THREE.Mesh(new THREE.CircleGeometry(place.s, 64), mat)
-      // Start small / offset for entrance
       mesh.position.set(place.x * 1.6, place.y * 1.4, place.z - 2)
       mesh.scale.setScalar(0.2)
       mesh.userData.rest = { ...place }
@@ -62,7 +63,9 @@ export class LetterWorld {
 
       this.loader.load(photo.src, (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace
-        mat.uniforms.uMap.value = tex
+        this.circleTextures[i] = tex
+        // Only apply if we haven't already inherited a gallery texture for handoff
+        if (!mat.uniforms.uMap.value) mat.uniforms.uMap.value = tex
       })
     })
   }
@@ -71,7 +74,6 @@ export class LetterWorld {
     return this.discs
   }
 
-  /** World-space rest positions of discs (for gallery morph targets) */
   getDiscWorldTargets(): Array<{ x: number; y: number; z: number }> {
     return this.discs.map((mesh) => {
       const rest = mesh.userData.rest as { x: number; y: number; z: number }
@@ -84,56 +86,113 @@ export class LetterWorld {
   }
 
   /**
-   * Continuous entrance: discs begin at incoming photo world positions
-   * (transformed into letter-local space) and expand into their rests.
+   * Continuous Ch1→Ch2 morph (finale-quality handoff):
+   * discs inherit gallery photo textures + world poses, stay fully visible
+   * while planes circularize into them, then settle and crossfade to circle art.
    */
-  playEntranceFrom(photoWorldPositions: THREE.Vector3[]): void {
+  playContinuousFromPhotos(
+    handoff: Array<{
+      worldPos: THREE.Vector3
+      texture: THREE.Texture
+      scale: number
+      rotation: THREE.Euler
+    }>,
+  ): void {
     if (this.revealed) return
     this.revealed = true
+
     this.discs.forEach((mesh, i) => {
       const rest = mesh.userData.rest as { x: number; y: number; z: number; s: number }
-      const src = photoWorldPositions[i % Math.max(1, photoWorldPositions.length)]
+      const src = handoff[i % Math.max(1, handoff.length)]
       if (src) {
         mesh.position.set(
-          src.x - this.group.position.x,
-          src.y - this.group.position.y,
-          src.z - this.group.position.z,
+          src.worldPos.x - this.group.position.x,
+          src.worldPos.y - this.group.position.y,
+          src.worldPos.z - this.group.position.z,
         )
-        mesh.scale.setScalar(0.55)
-        this.mats[i].uniforms.uOpacity.value = 0.35
+        // Match outgoing plane scale so the cut is invisible
+        const s = Math.max(0.45, src.scale * 0.85)
+        mesh.scale.set(s, s, 1)
+        mesh.rotation.set(src.rotation.x * 0.3, src.rotation.y * 0.3, src.rotation.z)
+        this.mats[i].uniforms.uMap.value = src.texture
+        this.mats[i].uniforms.uOpacity.value = 1
         this.rims[i].position.copy(mesh.position)
+        ;(this.rims[i].material as THREE.MeshBasicMaterial).opacity = 0.15
       }
+
       gsap.to(mesh.position, {
         x: rest.x,
         y: rest.y,
         z: rest.z,
-        duration: 1.35,
-        delay: i * 0.07,
+        duration: 1.65,
+        delay: i * 0.05,
+        ease: 'power3.inOut',
+      })
+      gsap.to(mesh.rotation, {
+        x: 0,
+        y: 0,
+        z: 0,
+        duration: 1.4,
+        delay: i * 0.05,
+        ease: 'power2.inOut',
+      })
+      gsap.to(mesh.scale, {
+        x: 1,
+        y: 1,
+        z: 1,
+        duration: 1.5,
+        delay: i * 0.05,
         ease: 'power3.out',
       })
-      gsap.to(mesh.scale, { x: 1, y: 1, z: 1, duration: 1.15, delay: i * 0.07, ease: 'back.out(1.4)' })
-      gsap.to(this.mats[i].uniforms.uOpacity, { value: 1, duration: 0.85, delay: 0.25 + i * 0.07 })
       gsap.to(this.rims[i].material as THREE.MeshBasicMaterial, {
         opacity: 0.35,
-        duration: 0.8,
-        delay: 0.3 + i * 0.08,
+        duration: 0.9,
+        delay: 0.45 + i * 0.05,
       })
       gsap.to(this.rims[i].position, {
         x: rest.x,
         y: rest.y,
         z: rest.z - 0.01,
-        duration: 1.35,
-        delay: i * 0.07,
-        ease: 'power3.out',
+        duration: 1.65,
+        delay: i * 0.05,
+        ease: 'power3.inOut',
       })
+
+      // Crossfade texture to dedicated circle photo after the spatial morph
+      const circleTex = this.circleTextures[i]
+      if (circleTex && src) {
+        gsap.delayedCall(1.15 + i * 0.05, () => {
+          // Soft swap: briefly dip opacity, swap map, restore
+          gsap.to(this.mats[i].uniforms.uOpacity, {
+            value: 0.55,
+            duration: 0.25,
+            onComplete: () => {
+              this.mats[i].uniforms.uMap.value = circleTex
+              gsap.to(this.mats[i].uniforms.uOpacity, { value: 1, duration: 0.4 })
+            },
+          })
+        })
+      } else {
+        gsap.to(this.mats[i].uniforms.uOpacity, { value: 1, duration: 0.4, delay: 0.3 + i * 0.05 })
+      }
     })
+  }
+
+  playEntranceFrom(photoWorldPositions: THREE.Vector3[]): void {
+    this.playContinuousFromPhotos(
+      photoWorldPositions.map((worldPos) => ({
+        worldPos,
+        texture: this.mats[0]?.uniforms.uMap.value as THREE.Texture,
+        scale: 0.55,
+        rotation: new THREE.Euler(),
+      })),
+    )
   }
 
   playEntrance(): void {
     this.playEntranceFrom([])
   }
 
-  /** Fade discs out as finale particles take over */
   dissolveForFinale(): gsap.core.Timeline {
     const tl = gsap.timeline()
     this.discs.forEach((mesh, i) => {
@@ -144,7 +203,6 @@ export class LetterWorld {
     return tl
   }
 
-  /** Expand circles toward memory portal layout */
   expandTowardPortals(targets: Array<{ x: number; y: number; z: number; s: number }>): gsap.core.Timeline {
     const tl = gsap.timeline()
     this.discs.forEach((mesh, i) => {
@@ -154,7 +212,7 @@ export class LetterWorld {
         {
           x: t.x,
           y: t.y,
-          z: t.z - 20, // toward memories group local → world handled by Experience
+          z: t.z - 20,
           duration: 1.35,
           ease: 'power3.inOut',
         },

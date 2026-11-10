@@ -26,7 +26,6 @@ function makeLetterTexture(ch: string): THREE.CanvasTexture {
   return tex
 }
 
-/** Sample opaque letter pixels into local-space point targets */
 function sampleLetterPoints(
   ch: string,
   target: THREE.Vector3,
@@ -92,6 +91,7 @@ export class FinaleWorld {
   private morphing = false
   private startPositions: Float32Array
   private endPositions: Float32Array
+  private colors: Float32Array
   private morph = { t: 0 }
 
   constructor(tier: QualityTier) {
@@ -130,7 +130,6 @@ export class FinaleWorld {
     })
 
     this.count = Math.max(this.letterTargets.length, particleBudget(tier).finale)
-    // Pad targets if needed
     while (this.letterTargets.length < this.count) {
       const src = this.letterTargets[this.letterTargets.length % Math.max(1, this.letters.length)]
       this.letterTargets.push(
@@ -145,19 +144,23 @@ export class FinaleWorld {
     const seeds = new Float32Array(this.count)
     this.startPositions = new Float32Array(this.count * 3)
     this.endPositions = new Float32Array(this.count * 3)
+    this.colors = new Float32Array(this.count * 3)
 
     for (let i = 0; i < this.count; i++) {
       const end = this.letterTargets[i]
       this.endPositions[i * 3] = end.x
       this.endPositions[i * 3 + 1] = end.y
       this.endPositions[i * 3 + 2] = end.z
-      // Default start scattered — overwritten by portal absorb
       positions[i * 3] = (Math.random() - 0.5) * 10
       positions[i * 3 + 1] = (Math.random() - 0.5) * 6
       positions[i * 3 + 2] = (Math.random() - 0.5) * 4
       this.startPositions[i * 3] = positions[i * 3]
       this.startPositions[i * 3 + 1] = positions[i * 3 + 1]
       this.startPositions[i * 3 + 2] = positions[i * 3 + 2]
+      // Default warm placeholder until portal colors are sampled
+      this.colors[i * 3] = 0.85
+      this.colors[i * 3 + 1] = 0.7
+      this.colors[i * 3 + 2] = 0.5
       scales[i] = 0.45 + Math.random()
       seeds[i] = Math.random()
     }
@@ -166,6 +169,7 @@ export class FinaleWorld {
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
     geo.setAttribute('aScale', new THREE.BufferAttribute(scales, 1))
     geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1))
+    geo.setAttribute('aColor', new THREE.BufferAttribute(this.colors, 3))
     this.mat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
@@ -177,6 +181,7 @@ export class FinaleWorld {
         uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
         uSize: { value: tier === 'low' ? 16 : 26 },
         uColor: { value: new THREE.Color('#f0d7b0') },
+        uColorMix: { value: 0 },
       },
     })
     this.points = new THREE.Points(geo, this.mat)
@@ -189,38 +194,47 @@ export class FinaleWorld {
   }
 
   /**
-   * Seed particles at portal world positions (and a cloud around each),
-   * then morph those same particles into letter glyphs. Letters fade in
-   * only as particles arrive — not a separate title animation.
+   * Seed particles at portal silhouettes with *sampled* portal pixel colors,
+   * then morph into letter glyphs. Color warms toward the final palette mid-flight.
    */
-  playFromPortals(portalWorldPositions: THREE.Vector3[]): void {
+  playFromPortals(
+    portalWorldPositions: THREE.Vector3[],
+    portalColorSamples?: Float32Array[],
+  ): void {
     if (this.played) return
     this.played = true
     this.morphing = true
     sound.play('finale', 0.55)
 
-    // Portals live near world z≈-42 while this group sits at z=-62.
-    // Seed particles in *visible* finale-local space (z≈3–9) using portal X/Y
-    // so they appear where the portals were on screen, then fly into glyphs.
     const localPortals = portalWorldPositions.map((p) => {
       const local = p.clone().sub(this.group.position)
-      // Pull into camera-visible depth in front of the letter plane
       local.z = 5.5 + (Math.random() - 0.5) * 2.5
       return local
     })
+
+    const nPortals = Math.max(1, localPortals.length)
     for (let i = 0; i < this.count; i++) {
-      const portal = localPortals[i % Math.max(1, localPortals.length)] ?? new THREE.Vector3()
+      const portalIdx = i % nPortals
+      const portal = localPortals[portalIdx] ?? new THREE.Vector3()
       const ring = (i / this.count) * Math.PI * 8
       const radius = 0.2 + (i % 23) * 0.055
-      const sx = portal.x + Math.cos(ring) * radius + (Math.random() - 0.5) * 0.45
-      const sy = portal.y + Math.sin(ring) * radius + (Math.random() - 0.5) * 0.45
-      const sz = portal.z + (Math.random() - 0.5) * 1.2
-      this.startPositions[i * 3] = sx
-      this.startPositions[i * 3 + 1] = sy
-      this.startPositions[i * 3 + 2] = sz
+      this.startPositions[i * 3] = portal.x + Math.cos(ring) * radius + (Math.random() - 0.5) * 0.45
+      this.startPositions[i * 3 + 1] = portal.y + Math.sin(ring) * radius + (Math.random() - 0.5) * 0.45
+      this.startPositions[i * 3 + 2] = portal.z + (Math.random() - 0.5) * 1.2
+
+      // Sample actual portal texture colors when available
+      const samples = portalColorSamples?.[portalIdx]
+      if (samples && samples.length >= 3) {
+        const pixelCount = Math.floor(samples.length / 3)
+        const pi = (i * 7 + portalIdx * 13) % pixelCount
+        this.colors[i * 3] = samples[pi * 3]
+        this.colors[i * 3 + 1] = samples[pi * 3 + 1]
+        this.colors[i * 3 + 2] = samples[pi * 3 + 2]
+      }
     }
 
     const pos = this.points.geometry.getAttribute('position') as THREE.BufferAttribute
+    const col = this.points.geometry.getAttribute('aColor') as THREE.BufferAttribute
     for (let i = 0; i < this.count; i++) {
       pos.setXYZ(
         i,
@@ -228,13 +242,18 @@ export class FinaleWorld {
         this.startPositions[i * 3 + 1],
         this.startPositions[i * 3 + 2],
       )
+      col.setXYZ(i, this.colors[i * 3], this.colors[i * 3 + 1], this.colors[i * 3 + 2])
     }
     pos.needsUpdate = true
+    col.needsUpdate = true
     this.points.visible = true
-    this.mat.uniforms.uSize.value = 36
+    this.mat.uniforms.uSize.value = 42
+    this.mat.uniforms.uColorMix.value = 0
     this.mat.uniforms.uColor.value.set('#f6e2c0')
+    // Prefer normal blending while colors are vivid so sampled pixels read clearly
+    this.mat.blending = THREE.NormalBlending
+    this.mat.needsUpdate = true
 
-    // Keep letter meshes invisible until particles have formed the glyphs
     this.letters.forEach((l) => {
       const mat = l.mesh.material as THREE.MeshStandardMaterial
       mat.opacity = 0
@@ -252,6 +271,7 @@ export class FinaleWorld {
         )
       }
       pos.needsUpdate = true
+      this.mat.uniforms.uColorMix.value = 1
       this.letters.forEach((l) => {
         l.mesh.scale.setScalar(1)
         ;(l.mesh.material as THREE.MeshStandardMaterial).opacity = 1
@@ -264,7 +284,6 @@ export class FinaleWorld {
     this.morph.t = 0
     const tl = gsap.timeline()
 
-    // Particles stream from portal silhouettes → letter shapes (visible mid-morph)
     tl.to(this.morph, {
       t: 1,
       duration: 2.6,
@@ -272,10 +291,14 @@ export class FinaleWorld {
       onUpdate: () => this.applyMorph(this.morph.t),
     }, 0)
 
-    // Soften particle size as they coalesce into glyphs
+    // Hold memory pixel colors through most of the morph, then warm to gold
+    tl.to(this.mat.uniforms.uColorMix, { value: 1, duration: 1.2, ease: 'power2.inOut' }, 1.55)
+    tl.add(() => {
+      this.mat.blending = THREE.AdditiveBlending
+      this.mat.needsUpdate = true
+    }, 1.55)
     tl.to(this.mat.uniforms.uSize, { value: 8, duration: 1.4, ease: 'power2.in' }, 1.3)
 
-    // Letters materialize only after particles have largely arrived
     this.letters.forEach((l, i) => {
       const mat = l.mesh.material as THREE.MeshStandardMaterial
       tl.to(mat, { opacity: 1, duration: 0.85, ease: 'power2.out' }, 1.7 + i * 0.04)
@@ -293,10 +316,8 @@ export class FinaleWorld {
     }, 2.8)
   }
 
-  /** Legacy entry — prefer playFromPortals */
   play(camera: THREE.PerspectiveCamera): void {
     if (this.played) return
-    // Without portals, start from scattered cloud around camera look target
     const fake = [
       new THREE.Vector3(-2, 1, -42),
       new THREE.Vector3(2, 1, -42),
@@ -309,15 +330,12 @@ export class FinaleWorld {
     }
   }
 
-  /** @deprecated — use playFromPortals */
   absorbFromPortals(portalPositions: THREE.Vector3[]): void {
-    // Keep for older call sites; seeding happens inside playFromPortals
     void portalPositions
   }
 
   private applyMorph(t: number): void {
     const pos = this.points.geometry.getAttribute('position') as THREE.BufferAttribute
-    // Ease with a slight arc (lift in Y mid-flight)
     const ease = t * t * (3 - 2 * t)
     for (let i = 0; i < this.count; i++) {
       const sx = this.startPositions[i * 3]

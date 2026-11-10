@@ -25,7 +25,8 @@ async function swipe(page, direction) {
   await page.mouse.down()
   await page.mouse.move(x2, y2, { steps: 14 })
   await page.mouse.up()
-  await page.waitForTimeout(2000)
+  // Flights settle around ~2.05s; leave a little headroom
+  await page.waitForTimeout(2400)
 }
 
 async function progress(page) {
