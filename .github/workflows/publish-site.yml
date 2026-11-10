@@ -1,0 +1,57 @@
+name: Publish static site to repo root
+
+# GitHub Pages for this repo deploys from branch `main`, folder `/` (not Actions).
+# This workflow rebuilds the Vite app and commits the static output to the repo root
+# so Pages can serve it without a build step.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - '.github/workflows/publish-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-site
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Build and publish to repository root
+        working-directory: app
+        run: npm run build:site
+
+      - name: Commit published site (if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .nojekyll index.html assets favicon.svg 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No site changes to commit."
+          else
+            git commit -m "Publish static site for GitHub Pages (branch root)"
+            git push
+          fi
