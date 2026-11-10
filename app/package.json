@@ -6,8 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:site": "node scripts/publish-root.mjs",
     "preview": "vite preview",
-    "verify": "npm run build && vite preview --host 127.0.0.1 --port 4173 & sleep 1 && node scripts/verify.mjs; code=$?; kill %1 2>/dev/null; exit $code"
+    "serve:pages": "node scripts/serve-pages-like.mjs",
+    "verify": "npm run build:site && node scripts/serve-pages-like.mjs & sleep 1 && BASE_URL=http://127.0.0.1:4173/hbd-website/ node scripts/verify.mjs; code=$?; pkill -f serve-pages-like.mjs 2>/dev/null; exit $code"
   },
   "devDependencies": {
     "playwright": "^1.65.0",

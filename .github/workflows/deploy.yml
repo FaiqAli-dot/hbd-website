@@ -1,54 +1,20 @@
-name: Deploy to GitHub Pages
+# Intentionally removed: this repository uses GitHub Pages from branch `main` / root,
+# not the GitHub Actions Pages deployment source.
+#
+# Site publishing is handled by publish-site.yml (builds app/ → commits root static files).
+#
+# Keeping this file as a no-op stub avoids confusion if an old badge still points here.
+name: Legacy Actions Pages deploy (disabled)
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: true
-
 jobs:
-  build:
+  disabled:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Explain
+        run: |
+          echo "GitHub Pages is configured to deploy from branch main / root."
+          echo "Use workflow publish-site.yml to rebuild static files into the repo root."
+          echo "Do not switch Pages Source to GitHub Actions unless you intentionally migrate."
