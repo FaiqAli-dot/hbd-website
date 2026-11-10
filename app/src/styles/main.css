@@ -43,6 +43,7 @@ body.gallery-complete {
   height: auto;
   min-height: 100%;
   touch-action: pan-y;
+  overscroll-behavior-y: contain;
   -webkit-overflow-scrolling: touch;
 }
 

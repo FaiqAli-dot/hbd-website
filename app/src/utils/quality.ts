@@ -17,9 +17,20 @@ export function maxPixelRatio(tier: QualityTier): number {
 }
 
 export function particleBudget(tier: QualityTier): { dust: number; finale: number } {
-  if (tier === 'low') return { dust: 180, finale: 900 }
-  if (tier === 'medium') return { dust: 420, finale: 1800 }
-  return { dust: 700, finale: 3200 }
+  if (tier === 'low') return { dust: 180, finale: 1400 }
+  if (tier === 'medium') return { dust: 420, finale: 2400 }
+  return { dust: 700, finale: 3600 }
+}
+
+/** Cap photo/video texture edge length for mobile GPUs */
+export function textureMaxSize(tier: QualityTier): number {
+  if (tier === 'low') return 512
+  if (tier === 'medium') return 1024
+  return 1536
+}
+
+export function isCoarsePointer(): boolean {
+  return window.matchMedia('(pointer: coarse), (max-width: 820px)').matches
 }
 
 export function supportsWebGL(): boolean {

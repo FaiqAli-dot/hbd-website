@@ -17,6 +17,7 @@ import {
   maxPixelRatio,
   type QualityTier,
 } from '../utils/quality'
+import { AdaptiveDpr } from '../utils/adaptiveDpr'
 import { galleryCopy, galleryPhotos, type GestureDirection } from '../content/config'
 
 gsap.registerPlugin(ScrollTrigger)
@@ -37,6 +38,7 @@ export class Experience {
   private tier: QualityTier
   private clock = new THREE.Clock()
   private pointer = { x: 0, y: 0 }
+  private gyro = { x: 0, y: 0 }
   private running = true
   private scrollProgress = 0
   private chapter: 'gallery' | 'letter' | 'memories' | 'finale' = 'gallery'
@@ -50,6 +52,9 @@ export class Experience {
   private letterTextRevealed = false
   private transitionFlags = { toLetter: false, toMemories: false, toFinale: false }
   private lastScrollProgress = 0
+  private adaptiveDpr: AdaptiveDpr
+  private lastFrameMs = 16.7
+  private cameraBase = { x: 0, y: 0.15, z: 5.2, lookY: 0 }
 
   constructor(app: HTMLElement) {
     this.app = app
@@ -61,14 +66,16 @@ export class Experience {
 
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
-      antialias: this.tier !== 'low',
+      antialias: this.tier === 'high',
       alpha: false,
       powerPreference: 'high-performance',
     })
     this.renderer.setClearColor('#07060a')
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.05
+    this.renderer.toneMappingExposure = 1.02
+
+    this.adaptiveDpr = new AdaptiveDpr(maxPixelRatio(this.tier), this.tier === 'low' ? 0.7 : 0.85)
 
     this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 120)
     this.camera.position.set(0, 0.15, 5.2)
@@ -77,9 +84,9 @@ export class Experience {
     this.scene.add(this.atmosphere.background)
     this.scene.add(this.atmosphere.group)
 
-    const key = new THREE.DirectionalLight('#ffd7b0', 1.4)
+    const key = new THREE.DirectionalLight('#ffd7b0', 1.35)
     key.position.set(3, 5, 4)
-    const rim = new THREE.DirectionalLight('#8aa0c8', 0.35)
+    const rim = new THREE.DirectionalLight('#8aa0c8', 0.32)
     rim.position.set(-4, 1, -2)
     const amb = new THREE.AmbientLight('#1c1820', 0.55)
     this.scene.add(key, rim, amb)
@@ -125,12 +132,14 @@ export class Experience {
     })
 
     this.ui.onContinue(() => {
+      this.requestGyroPermission()
       if (!this.unlocked) this.unlockJourney()
       this.scrollIntoJourney()
     })
 
     this.bindInput()
     this.bindScrollCamera()
+    this.bindGyro()
     this.onResize()
     window.addEventListener('resize', this.onResize)
     document.addEventListener('visibilitychange', this.onVisibility)
@@ -138,7 +147,6 @@ export class Experience {
     this.tick()
   }
 
-  /** Release iOS/Android scroll lock and enable the rest of the journey. */
   private unlockJourney(): void {
     if (this.unlocked) {
       this.ui.setGalleryComplete(true)
@@ -148,7 +156,6 @@ export class Experience {
 
     document.documentElement.classList.add('gallery-complete')
     document.body.classList.add('gallery-complete')
-    // Explicit styles help iOS Safari drop the prior height:100% / overflow:hidden lock.
     document.documentElement.style.overflowY = 'auto'
     document.documentElement.style.height = 'auto'
     document.documentElement.style.touchAction = 'pan-y'
@@ -165,7 +172,6 @@ export class Experience {
     this.hand3d.demonstrate('scroll-up')
     this.ui.setHint(galleryCopy.scrollHint, '')
 
-    // Force layout, then refresh ScrollTrigger so scrubbing matches new document height.
     void document.body.offsetHeight
     requestAnimationFrame(() => {
       ScrollTrigger.refresh()
@@ -220,6 +226,35 @@ export class Experience {
     this.ui.setHint(galleryCopy.introHint, labels[g])
   }
 
+  private requestGyroPermission(): void {
+    const DOE = DeviceOrientationEvent as unknown as {
+      requestPermission?: () => Promise<string>
+    }
+    if (typeof DOE.requestPermission === 'function') {
+      void DOE.requestPermission().catch(() => undefined)
+    }
+  }
+
+  private bindGyro(): void {
+    const onOrient = (e: DeviceOrientationEvent) => {
+      if (e.beta == null || e.gamma == null) return
+      // Normalize roughly to -1..1
+      this.gyro.x = THREE.MathUtils.clamp(e.gamma / 45, -1, 1)
+      this.gyro.y = THREE.MathUtils.clamp((e.beta - 45) / 45, -1, 1)
+    }
+    window.addEventListener('deviceorientation', onOrient)
+    this.extraCleanup.push(() => window.removeEventListener('deviceorientation', onOrient))
+
+    // Also try on first pointer down after unlock (iOS gesture requirement)
+    const onFirst = () => {
+      if (!this.unlocked) return
+      this.requestGyroPermission()
+      window.removeEventListener('pointerdown', onFirst)
+    }
+    window.addEventListener('pointerdown', onFirst)
+    this.extraCleanup.push(() => window.removeEventListener('pointerdown', onFirst))
+  }
+
   private bindInput(): void {
     this.detachGestures = attachSwipeGestures(this.app, {
       threshold: 48,
@@ -231,8 +266,6 @@ export class Experience {
       },
     })
 
-    // After unlock, a deliberate swipe-up on the canvas also advances into the letter
-    // (belt-and-suspenders for devices that still struggle with native scroll).
     let swipeStartY = 0
     let swipeTracking = false
     const onUnlockSwipeStart = (e: TouchEvent) => {
@@ -252,12 +285,7 @@ export class Experience {
     this.canvas.addEventListener('touchend', onUnlockSwipeEnd, { passive: true })
 
     const onKey = (e: KeyboardEvent) => {
-      if (this.unlocked) {
-        if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
-          // allow native scroll
-        }
-        return
-      }
+      if (this.unlocked) return
       if (this.chapter !== 'gallery') return
       const map: Record<string, GestureDirection> = {
         ArrowLeft: 'left',
@@ -320,6 +348,8 @@ export class Experience {
       e.preventDefault()
     }
     window.addEventListener('wheel', lock, { passive: false })
+    // Only preventDefault on touchmove while gallery is locked — detach after unlock
+    // so iOS pull-to-refresh / overscroll are not fighting the page.
     window.addEventListener('touchmove', lock, { passive: false })
     this.detachScrollLock = () => {
       window.removeEventListener('wheel', lock)
@@ -332,13 +362,6 @@ export class Experience {
     this.attachScrollLock()
     this.extraCleanup.push(() => this.detachScrollLock?.())
 
-    const cameraState = {
-      x: 0,
-      y: 0.15,
-      z: 5.2,
-      lookY: 0,
-    }
-
     ScrollTrigger.create({
       trigger: '[data-scroll-space]',
       start: 'top top',
@@ -350,33 +373,32 @@ export class Experience {
         const p = self.progress
         if (p < 0.33) {
           const t = p / 0.33
-          cameraState.z = THREE.MathUtils.lerp(5.2, -18, t)
-          cameraState.y = THREE.MathUtils.lerp(0.15, 0.2, t)
-          cameraState.x = Math.sin(t * Math.PI) * 0.35
+          this.cameraBase.z = THREE.MathUtils.lerp(5.2, -18, t)
+          this.cameraBase.y = THREE.MathUtils.lerp(0.15, 0.2, t)
+          this.cameraBase.x = Math.sin(t * Math.PI) * 0.45
+          this.cameraBase.lookY = THREE.MathUtils.lerp(0, 0.05, t)
           this.setChapter('letter')
         } else if (p < 0.66) {
           const t = (p - 0.33) / 0.33
-          cameraState.z = THREE.MathUtils.lerp(-18, -38, t)
-          cameraState.y = THREE.MathUtils.lerp(0.2, 0.1, t)
-          cameraState.x = Math.cos(t * Math.PI) * 0.45
+          this.cameraBase.z = THREE.MathUtils.lerp(-18, -38, t)
+          this.cameraBase.y = THREE.MathUtils.lerp(0.2, 0.1, t)
+          this.cameraBase.x = Math.cos(t * Math.PI) * 0.55
+          this.cameraBase.lookY = 0.02
           this.setChapter('memories')
         } else {
           const t = (p - 0.66) / 0.34
-          cameraState.z = THREE.MathUtils.lerp(-38, -56, t)
-          cameraState.y = THREE.MathUtils.lerp(0.1, 0.0, t)
-          cameraState.x = 0
+          this.cameraBase.z = THREE.MathUtils.lerp(-38, -56, t)
+          this.cameraBase.y = THREE.MathUtils.lerp(0.1, 0.0, t)
+          this.cameraBase.x = Math.sin(t * Math.PI * 0.5) * 0.15
+          this.cameraBase.lookY = 0
           this.setChapter('finale')
-          if (t > 0.25) this.finale.play(this.camera)
         }
-        this.camera.position.set(cameraState.x, cameraState.y, cameraState.z)
-        this.camera.lookAt(0, cameraState.lookY, cameraState.z - 6)
       },
     })
   }
 
   private setChapter(chapter: typeof this.chapter): void {
     if (this.chapter === chapter) return
-    const prev = this.chapter
     this.chapter = chapter
     this.atmosphere.setPalette(chapter)
     this.ui.setChapter(chapter)
@@ -386,8 +408,16 @@ export class Experience {
 
     if (chapter === 'letter' && !this.transitionFlags.toLetter) {
       this.transitionFlags.toLetter = true
-      if (!prefersReducedMotion()) this.gallery.gatherForLetter()
-      this.letter.playEntrance()
+      const targets = this.letter.getDiscWorldTargets()
+      const photoWorld = this.gallery.getSettledMeshes().map((m) => {
+        const v = new THREE.Vector3()
+        m.getWorldPosition(v)
+        return v
+      })
+      if (!prefersReducedMotion()) {
+        this.gallery.morphIntoLetter(targets)
+      }
+      this.letter.playEntranceFrom(photoWorld)
       this.revealLetterText()
     }
 
@@ -402,12 +432,11 @@ export class Experience {
     if (chapter === 'finale' && !this.transitionFlags.toFinale) {
       this.transitionFlags.toFinale = true
       const worldPos = this.memories.getWorldPositions()
-      this.finale.absorbFromPortals(worldPos)
-      if (!prefersReducedMotion()) this.memories.dissolve()
-      this.finale.play(this.camera)
+      // Particles seeded at portals → morph into letters; portals + discs dissolve in parallel
+      this.finale.playFromPortals(worldPos)
+      this.memories.dissolve()
+      this.letter.dissolveForFinale()
     }
-
-    void prev
   }
 
   private revealLetterText(): void {
@@ -422,15 +451,18 @@ export class Experience {
     })
   }
 
+  private applyPixelRatio(pr: number): void {
+    this.renderer.setPixelRatio(pr)
+    this.post.setPixelRatio(pr)
+  }
+
   private onResize = (): void => {
     const w = window.innerWidth
     const h = window.innerHeight
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
-    const pr = maxPixelRatio(this.tier)
-    this.renderer.setPixelRatio(pr)
+    this.applyPixelRatio(this.adaptiveDpr.value)
     this.renderer.setSize(w, h, false)
-    this.post.setPixelRatio(pr)
     this.post.setSize(w, h)
   }
 
@@ -442,30 +474,58 @@ export class Experience {
   private tick = (): void => {
     if (!this.running) return
     this.raf = requestAnimationFrame(this.tick)
-    const t = this.clock.getElapsedTime()
+    const dtMs = Math.min(64, this.clock.getDelta() * 1000) || 16.7
+    this.lastFrameMs = dtMs
+    const t = this.clock.elapsedTime
+
+    // Adaptive render resolution from measured frame time
+    const nextPr = this.adaptiveDpr.sample(dtMs)
+    if (Math.abs(nextPr - this.renderer.getPixelRatio()) > 0.04) {
+      this.applyPixelRatio(nextPr)
+    }
+
     this.atmosphere.update(t, this.scrollProgress)
     this.gallery.update(t)
     this.letter.update(t, this.pointer)
     this.memories.update(t)
     this.finale.update(t)
 
-    // Subtle idle drift in gallery (before the journey unlocks)
-    if (!this.unlocked && this.chapter === 'gallery' && !prefersReducedMotion()) {
-      this.camera.position.x += (this.pointer.x * 0.12 - this.camera.position.x) * 0.02
-      this.camera.position.y += (0.15 + this.pointer.y * 0.08 - this.camera.position.y) * 0.02
-      this.camera.lookAt(0, 0.1, 0)
+    // Camera parallax: pointer + gyro + scroll-tied base
+    const reduced = prefersReducedMotion()
+    const parallaxX = reduced ? 0 : this.pointer.x * 0.18 + this.gyro.x * 0.22
+    const parallaxY = reduced ? 0 : this.pointer.y * 0.1 + this.gyro.y * 0.16
+
+    if (!this.unlocked && this.chapter === 'gallery') {
+      const tx = parallaxX * 0.55
+      const ty = 0.15 + parallaxY * 0.4
+      this.camera.position.x += (tx - this.camera.position.x) * 0.04
+      this.camera.position.y += (ty - this.camera.position.y) * 0.04
+      this.camera.lookAt(parallaxX * 0.35, 0.1 + parallaxY * 0.2, 0)
+    } else if (this.unlocked) {
+      const tx = this.cameraBase.x + parallaxX * 0.35
+      const ty = this.cameraBase.y + parallaxY * 0.25
+      const tz = this.cameraBase.z
+      this.camera.position.x += (tx - this.camera.position.x) * 0.08
+      this.camera.position.y += (ty - this.camera.position.y) * 0.08
+      this.camera.position.z += (tz - this.camera.position.z) * 0.1
+      this.camera.lookAt(
+        parallaxX * 0.4,
+        this.cameraBase.lookY + parallaxY * 0.15,
+        this.camera.position.z - 6,
+      )
     }
 
-    // Motion-linked chromatic aberration
     const scrollDelta = Math.abs(this.scrollProgress - this.lastScrollProgress)
     this.lastScrollProgress = this.scrollProgress
     const speed = !this.unlocked
-      ? Math.min(1, Math.hypot(this.pointer.x, this.pointer.y) * 0.35)
-      : Math.min(1, scrollDelta * 10)
+      ? Math.min(1, Math.hypot(this.pointer.x, this.pointer.y) * 0.25)
+      : Math.min(1, scrollDelta * 8)
     this.post.setMotionAmount(speed)
 
     this.renderer.autoClear = true
-    this.post.render(t)
+    this.post.render(t, this.renderer, this.scene, this.camera)
+
+    void this.lastFrameMs
   }
 
   destroy(): void {
@@ -475,7 +535,7 @@ export class Experience {
     window.removeEventListener('resize', this.onResize)
     document.removeEventListener('visibilitychange', this.onVisibility)
     this.extraCleanup.forEach((fn) => fn())
-    ScrollTrigger.getAll().forEach((t) => t.kill())
+    ScrollTrigger.getAll().forEach((st) => st.kill())
     this.gallery.dispose()
     this.letter.dispose()
     this.memories.dispose()

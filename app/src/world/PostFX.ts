@@ -10,12 +10,14 @@ import {
 } from './shaders'
 import type { QualityTier } from '../utils/quality'
 
+/** Restrained cinematic post — premium, not gaming VFX. */
 export class PostFX {
   readonly composer: EffectComposer
   private bloom: UnrealBloomPass
   private vignette: ShaderPass
   private chroma: ShaderPass
-  private enabled: boolean
+  private readonly baseChroma: number
+  private useComposer: boolean
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -23,22 +25,25 @@ export class PostFX {
     camera: THREE.Camera,
     tier: QualityTier,
   ) {
-    this.enabled = tier !== 'low'
+    // Mobile/low: skip bloom+chroma composers; vignette-only or direct render
+    this.useComposer = tier !== 'low'
     this.composer = new EffectComposer(renderer)
     this.composer.addPass(new RenderPass(scene, camera))
 
+    const bloomStrength = tier === 'high' ? 0.18 : 0.1
     this.bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      tier === 'high' ? 0.55 : tier === 'medium' ? 0.35 : 0.18,
-      0.75,
-      0.82,
+      bloomStrength,
+      0.55,
+      0.9,
     )
     this.composer.addPass(this.bloom)
 
+    this.baseChroma = tier === 'high' ? 0.00055 : 0.0003
     this.chroma = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
-        uAmount: { value: tier === 'high' ? 0.0018 : tier === 'medium' ? 0.0012 : 0.0006 },
+        uAmount: { value: this.baseChroma },
       },
       vertexShader: vignetteVertex,
       fragmentShader: chromaticFragment,
@@ -48,26 +53,25 @@ export class PostFX {
     this.vignette = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
-        uIntensity: { value: 0.58 },
+        uIntensity: { value: 0.42 },
         uTime: { value: 0 },
-        uGrain: { value: tier === 'low' ? 0.02 : 0.038 },
+        uGrain: { value: tier === 'high' ? 0.018 : 0.012 },
       },
       vertexShader: vignetteVertex,
       fragmentShader: vignetteGrainFragment,
     })
     this.composer.addPass(this.vignette)
 
-    // Lightweight "DOF feel": stronger vignette + bloom when low tier skips heavy BokehPass
-    if (!this.enabled) {
-      this.bloom.strength = 0.12
-      this.chroma.uniforms.uAmount.value = 0.0004
+    if (!this.useComposer) {
+      this.bloom.strength = 0.06
+      this.chroma.uniforms.uAmount.value = 0.00015
+      this.vignette.uniforms.uGrain.value = 0.008
     }
   }
 
-  /** Pulse chromatic aberration during fast motion */
   setMotionAmount(amount: number): void {
-    const base = this.enabled ? 0.0014 : 0.0005
-    this.chroma.uniforms.uAmount.value = base + amount * 0.004
+    // Very subtle motion pulse only
+    this.chroma.uniforms.uAmount.value = this.baseChroma + Math.min(1, amount) * 0.00045
   }
 
   setSize(w: number, h: number): void {
@@ -79,7 +83,11 @@ export class PostFX {
     this.composer.setPixelRatio(ratio)
   }
 
-  render(time: number): void {
+  render(time: number, renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.Camera): void {
+    if (!this.useComposer) {
+      renderer.render(scene, camera)
+      return
+    }
     this.vignette.uniforms.uTime.value = time
     this.composer.render()
   }

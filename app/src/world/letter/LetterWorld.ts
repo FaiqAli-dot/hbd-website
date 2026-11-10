@@ -71,35 +71,77 @@ export class LetterWorld {
     return this.discs
   }
 
-  playEntrance(): void {
+  /** World-space rest positions of discs (for gallery morph targets) */
+  getDiscWorldTargets(): Array<{ x: number; y: number; z: number }> {
+    return this.discs.map((mesh) => {
+      const rest = mesh.userData.rest as { x: number; y: number; z: number }
+      return {
+        x: rest.x + this.group.position.x,
+        y: rest.y + this.group.position.y,
+        z: rest.z + this.group.position.z,
+      }
+    })
+  }
+
+  /**
+   * Continuous entrance: discs begin at incoming photo world positions
+   * (transformed into letter-local space) and expand into their rests.
+   */
+  playEntranceFrom(photoWorldPositions: THREE.Vector3[]): void {
     if (this.revealed) return
     this.revealed = true
     this.discs.forEach((mesh, i) => {
       const rest = mesh.userData.rest as { x: number; y: number; z: number; s: number }
+      const src = photoWorldPositions[i % Math.max(1, photoWorldPositions.length)]
+      if (src) {
+        mesh.position.set(
+          src.x - this.group.position.x,
+          src.y - this.group.position.y,
+          src.z - this.group.position.z,
+        )
+        mesh.scale.setScalar(0.55)
+        this.mats[i].uniforms.uOpacity.value = 0.35
+        this.rims[i].position.copy(mesh.position)
+      }
       gsap.to(mesh.position, {
         x: rest.x,
         y: rest.y,
         z: rest.z,
-        duration: 1.3,
-        delay: i * 0.08,
-        ease: 'back.out(1.5)',
+        duration: 1.35,
+        delay: i * 0.07,
+        ease: 'power3.out',
       })
-      gsap.to(mesh.scale, { x: 1, y: 1, z: 1, duration: 1.1, delay: i * 0.08, ease: 'power3.out' })
-      gsap.to(this.mats[i].uniforms.uOpacity, { value: 1, duration: 0.8, delay: i * 0.08 })
+      gsap.to(mesh.scale, { x: 1, y: 1, z: 1, duration: 1.15, delay: i * 0.07, ease: 'back.out(1.4)' })
+      gsap.to(this.mats[i].uniforms.uOpacity, { value: 1, duration: 0.85, delay: 0.25 + i * 0.07 })
       gsap.to(this.rims[i].material as THREE.MeshBasicMaterial, {
         opacity: 0.35,
         duration: 0.8,
-        delay: i * 0.1,
+        delay: 0.3 + i * 0.08,
       })
       gsap.to(this.rims[i].position, {
         x: rest.x,
         y: rest.y,
         z: rest.z - 0.01,
-        duration: 1.3,
-        delay: i * 0.08,
-        ease: 'back.out(1.5)',
+        duration: 1.35,
+        delay: i * 0.07,
+        ease: 'power3.out',
       })
     })
+  }
+
+  playEntrance(): void {
+    this.playEntranceFrom([])
+  }
+
+  /** Fade discs out as finale particles take over */
+  dissolveForFinale(): gsap.core.Timeline {
+    const tl = gsap.timeline()
+    this.discs.forEach((mesh, i) => {
+      tl.to(this.mats[i].uniforms.uOpacity, { value: 0, duration: 0.9, ease: 'power2.in' }, i * 0.04)
+      tl.to(mesh.scale, { x: 0.05, y: 0.05, z: 1, duration: 1.0, ease: 'power3.in' }, i * 0.04)
+      tl.to(this.rims[i].material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.6 }, i * 0.04)
+    })
+    return tl
   }
 
   /** Expand circles toward memory portal layout */

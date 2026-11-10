@@ -140,16 +140,42 @@ export class MemoriesWorld {
     })
   }
 
+  /**
+   * Portals surge, then shatter while flying toward finale depth so their
+   * pixels (FinaleWorld particles) can be seen leaving the circles.
+   */
   dissolve(): gsap.core.Timeline {
     const tl = gsap.timeline()
     this.portals.forEach((p, i) => {
+      tl.to(p.material.uniforms.uBoost, { value: 0.55, duration: 0.2 }, i * 0.05)
       tl.to(
         p.group.scale,
-        { x: 0.05, y: 0.05, z: 0.05, duration: 0.9, ease: 'power3.in' },
+        { x: 1.2, y: 1.2, z: 1.2, duration: 0.3, ease: 'power2.out' },
         i * 0.05,
       )
-      tl.to(p.material.uniforms.uOpacity, { value: 0, duration: 0.7 }, i * 0.05)
-      this.pause(p)
+      // Drift toward finale (more negative local z within memories group)
+      tl.to(
+        p.group.position,
+        {
+          z: p.rest.z - 14,
+          x: p.rest.x * 0.35,
+          y: p.rest.y * 0.35,
+          duration: 1.5,
+          ease: 'power2.in',
+        },
+        0.15 + i * 0.05,
+      )
+      tl.to(
+        p.group.scale,
+        { x: 0.04, y: 0.04, z: 0.04, duration: 1.45, ease: 'power3.in' },
+        0.25 + i * 0.05,
+      )
+      tl.to(
+        p.material.uniforms.uOpacity,
+        { value: 0, duration: 1.1, ease: 'power2.in' },
+        0.55 + i * 0.05,
+      )
+      tl.add(() => this.pause(p), 0.35 + i * 0.05)
     })
     return tl
   }
