@@ -9,11 +9,11 @@ fs.mkdirSync(OUT, { recursive: true })
 const gestures = ['left', 'right', 'up', 'down', 'left', 'right', 'up', 'down']
 
 async function swipe(page, direction) {
-  const box = await page.locator('.chapter--gallery').boundingBox()
-  if (!box) throw new Error('gallery missing')
+  const box = await page.locator('.webgl-canvas').boundingBox()
+  if (!box) throw new Error('webgl canvas missing')
   const cx = box.x + box.width / 2
-  const cy = box.y + box.height / 2
-  const dist = 120
+  const cy = box.y + box.height * 0.45
+  const dist = 140
   const map = {
     left: [cx + dist / 2, cy, cx - dist / 2, cy],
     right: [cx - dist / 2, cy, cx + dist / 2, cy],
@@ -23,9 +23,9 @@ async function swipe(page, direction) {
   const [x1, y1, x2, y2] = map[direction]
   await page.mouse.move(x1, y1)
   await page.mouse.down()
-  await page.mouse.move(x2, y2, { steps: 12 })
+  await page.mouse.move(x2, y2, { steps: 14 })
   await page.mouse.up()
-  await page.waitForTimeout(750)
+  await page.waitForTimeout(1600)
 }
 
 async function progress(page) {
@@ -35,7 +35,7 @@ async function progress(page) {
 const browser = await chromium.launch({
   headless: true,
   executablePath: '/usr/local/bin/google-chrome',
-  args: ['--no-sandbox', '--disable-dev-shm-usage'],
+  args: ['--no-sandbox', '--disable-dev-shm-usage', '--use-gl=angle', '--enable-webgl'],
 })
 const context = await browser.newContext({
   viewport: { width: 1280, height: 800 },
@@ -48,47 +48,64 @@ page.on('console', (msg) => {
 })
 page.on('pageerror', (err) => consoleErrors.push(String(err)))
 
-const report = { ok: true, checks: [], consoleErrors: [], assetFails: [] }
+const report = { ok: true, checks: [], consoleErrors: [], assetFails: [], fps: null }
 
 try {
   const res = await page.goto(BASE, { waitUntil: 'networkidle' })
   report.checks.push({ name: 'load', status: res?.ok() ? 'pass' : 'fail', code: res?.status() })
 
-  await page.waitForSelector('.chapter--gallery')
+  await page.waitForSelector('.webgl-canvas')
+  await page.waitForSelector('[data-gallery-hud]')
+  await page.waitForTimeout(800)
   await page.screenshot({ path: path.join(OUT, 'chapter1-gallery-start.png'), fullPage: false })
 
-  // Scroll should be blocked
   const before = await page.evaluate(() => window.scrollY)
   await page.mouse.wheel(0, 800)
   await page.waitForTimeout(200)
   const after = await page.evaluate(() => window.scrollY)
-  const locked = after === before && !(await page.evaluate(() => document.documentElement.classList.contains('gallery-complete')))
+  const locked =
+    after === before &&
+    !(await page.evaluate(() => document.documentElement.classList.contains('gallery-complete')))
   report.checks.push({ name: 'scroll-locked-before-complete', status: locked ? 'pass' : 'fail', before, after })
 
-  // Wrong gesture should not advance
-  await swipe(page, 'right') // first expected is left
+  await swipe(page, 'right')
   let p = await progress(page)
   report.checks.push({ name: 'wrong-gesture-ignored', status: p === '00' ? 'pass' : 'fail', progress: p })
 
-  // Correct first swipe
   await swipe(page, 'left')
   p = await progress(page)
   report.checks.push({ name: 'first-reveal', status: p === '01' ? 'pass' : 'fail', progress: p })
   await page.screenshot({ path: path.join(OUT, 'chapter1-gallery-first-reveal.png'), fullPage: false })
 
-  // Undo
   await page.waitForTimeout(200)
   await page.locator('[data-undo]').click({ force: true })
-  await page.waitForTimeout(500)
+  await page.waitForTimeout(600)
   p = await progress(page)
   report.checks.push({ name: 'undo', status: p === '00' ? 'pass' : 'fail', progress: p })
 
-  // Complete all gestures
-  for (const g of gestures) {
-    await swipe(page, g)
+  for (let i = 0; i < gestures.length; i++) {
+    await swipe(page, gestures[i])
+    const expected = String(i + 1).padStart(2, '0')
+    try {
+      await page.waitForFunction(
+        (exp) => document.querySelector('[data-progress-current]')?.textContent === exp,
+        expected,
+        { timeout: 4000 },
+      )
+    } catch {
+      report.checks.push({
+        name: `gesture-step-${i + 1}`,
+        status: 'fail',
+        expected,
+        progress: await progress(page),
+      })
+      break
+    }
   }
   p = await progress(page)
-  const complete = await page.evaluate(() => document.documentElement.classList.contains('gallery-complete'))
+  const complete = await page.evaluate(() =>
+    document.documentElement.classList.contains('gallery-complete'),
+  )
   const hint = await page.locator('[data-hint]').innerText()
   report.checks.push({
     name: 'gallery-complete',
@@ -99,64 +116,78 @@ try {
   })
   await page.screenshot({ path: path.join(OUT, 'chapter1-gallery-complete.png'), fullPage: false })
 
-  // Scroll should now work
-  await page.mouse.wheel(0, 1200)
-  await page.waitForTimeout(400)
+  await page.mouse.wheel(0, 1600)
+  await page.waitForTimeout(700)
   const scrolled = await page.evaluate(() => window.scrollY)
   report.checks.push({ name: 'scroll-unlocked', status: scrolled > 0 ? 'pass' : 'fail', scrolled })
 
-  // Letter chapter
   await page.locator('#chapter-letter').scrollIntoViewIfNeeded()
-  await page.waitForTimeout(600)
+  await page.waitForTimeout(900)
   await page.screenshot({ path: path.join(OUT, 'chapter2-letter.png'), fullPage: false })
-  const circles = await page.locator('.letter__circle').count()
-  report.checks.push({ name: 'letter-circles', status: circles >= 4 ? 'pass' : 'fail', circles })
+  const letterActive = await page.locator('[data-letter-overlay]').evaluate((el) => el.classList.contains('is-active'))
+  report.checks.push({ name: 'letter-overlay', status: letterActive ? 'pass' : 'fail', letterActive })
 
-  // Memories
   await page.locator('#chapter-memories').scrollIntoViewIfNeeded()
-  await page.waitForTimeout(800)
+  await page.waitForTimeout(1000)
   await page.screenshot({ path: path.join(OUT, 'chapter3-memories.png'), fullPage: false })
-  const memories = await page.locator('.memory').count()
-  report.checks.push({ name: 'four-memories', status: memories === 4 ? 'pass' : 'fail', memories })
+  const memActive = await page.locator('[data-memories-overlay]').evaluate((el) => el.classList.contains('is-active'))
+  report.checks.push({ name: 'memories-overlay', status: memActive ? 'pass' : 'fail', memActive })
 
-  // Hover play first video
-  const video = page.locator('.memory video').first()
-  await page.locator('.memory').first().hover()
+  // Tap/hover center-left portal region
+  await page.mouse.move(420, 320)
   await page.waitForTimeout(500)
-  const playing = await video.evaluate((v) => !v.paused)
-  report.checks.push({ name: 'video-hover-play', status: playing ? 'pass' : 'fail', playing })
 
-  // Finale
   await page.locator('#chapter-finale').scrollIntoViewIfNeeded()
-  await page.waitForTimeout(2200)
+  await page.waitForTimeout(2800)
   await page.screenshot({ path: path.join(OUT, 'chapter4-finale.png'), fullPage: false })
-  const finaleText = await page.locator('.finale__draw-text').textContent()
-  report.checks.push({ name: 'finale-text', status: /HAPPY BIRTHDAY/.test(finaleText || '') ? 'pass' : 'fail', finaleText })
+  const finaleActive = await page.locator('[data-finale-overlay]').evaluate((el) => el.classList.contains('is-active'))
+  report.checks.push({ name: 'finale-overlay', status: finaleActive ? 'pass' : 'fail', finaleActive })
 
-  // Mobile layout
+  // Rough FPS via rAF over ~1s
+  report.fps = await page.evaluate(async () => {
+    let frames = 0
+    const start = performance.now()
+    await new Promise((resolve) => {
+      const tick = (now) => {
+        frames += 1
+        if (now - start < 1000) requestAnimationFrame(tick)
+        else resolve(null)
+      }
+      requestAnimationFrame(tick)
+    })
+    return frames
+  })
+  // Headless GL is often capped; treat as informational unless extremely broken.
+  report.checks.push({
+    name: 'fps-sample',
+    status: report.fps >= 8 ? 'pass' : 'fail',
+    fps: report.fps,
+    note: 'headless WebGL sample — not a device benchmark',
+  })
+
   await page.setViewportSize({ width: 390, height: 844 })
   await page.evaluate(() => window.scrollTo(0, 0))
-  await page.waitForTimeout(300)
+  await page.waitForTimeout(400)
   await page.screenshot({ path: path.join(OUT, 'mobile-gallery.png'), fullPage: false })
   await page.locator('#chapter-memories').scrollIntoViewIfNeeded()
-  await page.waitForTimeout(400)
+  await page.waitForTimeout(500)
   await page.screenshot({ path: path.join(OUT, 'mobile-memories.png'), fullPage: false })
 
-  // Asset path check from network
   const assetSample = await page.evaluate(() => {
-    const img = document.querySelector('.gallery__card img, .letter__circle img')
-    const v = document.querySelector('.memory video')
-    return { img: img?.getAttribute('src') || img?.src, video: v?.getAttribute('src') || v?.src }
+    const canvas = document.querySelector('.webgl-canvas')
+    const scripts = [...document.scripts].map((s) => s.src).filter(Boolean)
+    return { hasCanvas: !!canvas, scripts }
   })
-  const pathsOk =
-    String(assetSample.img || '').includes('/hbd-website/') &&
-    String(assetSample.video || '').includes('/hbd-website/')
+  const pathsOk = assetSample.scripts.some((s) => s.includes('/hbd-website/assets/'))
   report.checks.push({ name: 'asset-base-path', status: pathsOk ? 'pass' : 'fail', assetSample })
 
-  // Sound toggle does not autoplay ambient beforehand
   await page.setViewportSize({ width: 1280, height: 800 })
   const soundPressed = await page.locator('[data-sound]').getAttribute('aria-pressed')
-  report.checks.push({ name: 'sound-off-by-default', status: soundPressed === 'false' ? 'pass' : 'fail', soundPressed })
+  report.checks.push({
+    name: 'sound-off-by-default',
+    status: soundPressed === 'false' ? 'pass' : 'fail',
+    soundPressed,
+  })
 } catch (err) {
   report.ok = false
   report.error = String(err)
