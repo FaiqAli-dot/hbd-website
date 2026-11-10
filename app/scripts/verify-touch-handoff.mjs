@@ -65,7 +65,7 @@ async function swipeTouch(page, direction) {
   await page.mouse.down()
   await page.mouse.move(x2, y2, { steps: 12 })
   await page.mouse.up()
-  await page.waitForTimeout(1500)
+  await page.waitForTimeout(2000)
 }
 
 async function runWithBrowser(browserType, label) {

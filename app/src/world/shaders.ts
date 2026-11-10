@@ -1,41 +1,49 @@
-/** Shared GLSL snippets and shader materials for the memory chamber */
+/** Shared GLSL for the cinematic memory chamber */
 
-export const photoRevealVertex = /* glsl */ `
+export const photoPlaneVertex = /* glsl */ `
 varying vec2 vUv;
+varying float vDistortion;
+uniform float uDistort;
+uniform float uTime;
 void main() {
   vUv = uv;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  vec3 p = position;
+  float wiggle = uDistort * 0.08 * sin(uTime * 6.0 + uv.y * 10.0);
+  p.x += wiggle * (uv.y - 0.5);
+  p.z += uDistort * 0.05 * cos(uTime * 4.0 + uv.x * 8.0);
+  vDistortion = uDistort;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
 }
 `
 
-export const photoRevealFragment = /* glsl */ `
+export const photoPlaneFragment = /* glsl */ `
 uniform sampler2D uMap;
-uniform float uProgress;
-uniform float uDirection; // 0 L, 1 R, 2 U, 3 D
+uniform float uOpacity;
+uniform float uRgbSplit;
+uniform float uSoftEdge;
 uniform float uTime;
-uniform float uGlass;
 uniform vec3 uTint;
 varying vec2 vUv;
-
-float softNoise(vec2 p) {
-  return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
-}
+varying float vDistortion;
 
 void main() {
   vec2 uv = vUv;
-  float n = softNoise(uv * 40.0 + uTime * 0.15) * 0.03;
-  float edge;
-  if (uDirection < 0.5) edge = uv.x + n;
-  else if (uDirection < 1.5) edge = (1.0 - uv.x) + n;
-  else if (uDirection < 2.5) edge = uv.y + n;
-  else edge = (1.0 - uv.y) + n;
+  float split = uRgbSplit * (0.004 + vDistortion * 0.012);
+  float r = texture2D(uMap, uv + vec2(split, 0.0)).r;
+  float g = texture2D(uMap, uv).g;
+  float b = texture2D(uMap, uv - vec2(split, 0.0)).b;
+  vec3 color = mix(vec3(r, g, b), uTint, 0.06);
 
-  float reveal = smoothstep(uProgress - 0.12, uProgress + 0.02, edge);
-  float mask = 1.0 - reveal;
-  vec4 tex = texture2D(uMap, uv);
-  float glass = uGlass * (0.12 + 0.1 * sin(uTime + uv.y * 8.0));
-  vec3 color = mix(tex.rgb, uTint, 0.08 + glass);
-  float alpha = tex.a * mask;
+  // Soft organic edge falloff (no hard picture frame)
+  float edge = smoothstep(0.0, uSoftEdge, uv.x)
+    * smoothstep(0.0, uSoftEdge, uv.y)
+    * smoothstep(0.0, uSoftEdge, 1.0 - uv.x)
+    * smoothstep(0.0, uSoftEdge, 1.0 - uv.y);
+
+  float grain = fract(sin(dot(uv * (uTime + 12.0), vec2(12.9898, 78.233))) * 43758.5453);
+  color += (grain - 0.5) * 0.04 * (0.4 + vDistortion);
+
+  float alpha = uOpacity * edge;
   if (alpha < 0.02) discard;
   gl_FragColor = vec4(color, alpha);
 }
@@ -59,11 +67,11 @@ varying vec2 vUv;
 
 void main() {
   vec2 uv = vUv;
-  float t = uTime * 0.04;
-  float wash = smoothstep(0.0, 1.0, uv.y + sin(uv.x * 3.0 + t) * 0.08);
+  float t = uTime * 0.035;
+  float wash = smoothstep(0.0, 1.0, uv.y + sin(uv.x * 2.5 + t) * 0.1);
   vec3 col = mix(uColorA, uColorB, wash);
-  col = mix(col, uColorC, 0.25 + 0.25 * sin(t + uv.x * 2.0 + uScroll));
-  float vignette = smoothstep(1.2, 0.35, length(uv - 0.5));
+  col = mix(col, uColorC, 0.2 + 0.2 * sin(t + uv.x * 1.8 + uScroll));
+  float vignette = smoothstep(1.15, 0.3, length(uv - 0.5));
   col *= vignette;
   gl_FragColor = vec4(col, 1.0);
 }
@@ -82,7 +90,7 @@ void main() {
   p.x += cos(uTime * 0.25 + aSeed * 4.0) * 0.08;
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = aScale * uSize * uPixelRatio * (1.0 / -mv.z);
+  gl_PointSize = aScale * uSize * uPixelRatio * (1.0 / max(0.4, -mv.z));
   vAlpha = smoothstep(0.0, 1.0, aScale);
 }
 `
@@ -99,18 +107,19 @@ void main() {
 }
 `
 
-export const vignetteFragment = /* glsl */ `
+export const vignetteGrainFragment = /* glsl */ `
 uniform sampler2D tDiffuse;
 uniform float uIntensity;
 uniform float uTime;
+uniform float uGrain;
 varying vec2 vUv;
 void main() {
   vec4 color = texture2D(tDiffuse, vUv);
   float dist = distance(vUv, vec2(0.5));
-  float vig = smoothstep(0.95, 0.35, dist);
+  float vig = smoothstep(0.95, 0.32, dist);
   float grain = fract(sin(dot(vUv * (uTime + 20.0), vec2(12.9898, 78.233))) * 43758.5453);
   color.rgb *= mix(1.0 - uIntensity, 1.0, vig);
-  color.rgb += (grain - 0.5) * 0.035;
+  color.rgb += (grain - 0.5) * uGrain;
   gl_FragColor = color;
 }
 `
@@ -123,10 +132,24 @@ void main() {
 }
 `
 
+export const chromaticFragment = /* glsl */ `
+uniform sampler2D tDiffuse;
+uniform float uAmount;
+varying vec2 vUv;
+void main() {
+  vec2 dir = (vUv - 0.5);
+  float r = texture2D(tDiffuse, vUv + dir * uAmount).r;
+  float g = texture2D(tDiffuse, vUv).g;
+  float b = texture2D(tDiffuse, vUv - dir * uAmount).b;
+  gl_FragColor = vec4(r, g, b, 1.0);
+}
+`
+
 export const circleMaskFragment = /* glsl */ `
 uniform sampler2D uMap;
 uniform float uSoft;
 uniform float uBoost;
+uniform float uOpacity;
 varying vec2 vUv;
 void main() {
   vec2 uv = vUv * 2.0 - 1.0;
@@ -134,6 +157,14 @@ void main() {
   float mask = 1.0 - smoothstep(1.0 - uSoft, 1.0, r);
   if (mask < 0.01) discard;
   vec4 tex = texture2D(uMap, vUv);
-  gl_FragColor = vec4(tex.rgb * (1.0 + uBoost), mask);
+  gl_FragColor = vec4(tex.rgb * (1.0 + uBoost), mask * uOpacity);
+}
+`
+
+export const photoRevealVertex = /* glsl */ `
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `

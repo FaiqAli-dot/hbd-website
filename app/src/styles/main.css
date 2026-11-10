@@ -298,6 +298,28 @@ html.gallery-complete .webgl-canvas {
   transform: none;
 }
 
+.letter-reveal {
+  opacity: 0;
+  transform: translateY(18px);
+}
+
+.letter-reveal.is-shown {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.8s var(--ease-out),
+    transform 0.8s var(--ease-out);
+}
+
+.gallery-hud .hand {
+  /* HUD hand is secondary; the in-scene Hand3D is primary */
+  opacity: 0.35;
+}
+
+html.gallery-complete .gallery-hud .hand {
+  opacity: 0.55;
+}
+
 .letter-overlay {
   align-content: center;
   justify-items: start;

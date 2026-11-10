@@ -50,11 +50,16 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     </div>
 
     <section class="letter-overlay" data-letter-overlay aria-hidden="true">
-      <p class="letter__eyebrow">${letterCopy.eyebrow}</p>
+      <p class="letter__eyebrow letter-reveal" data-reveal-group="0">${letterCopy.eyebrow}</p>
       <div class="letter__body">
-        ${letterCopy.paragraphs.map((p) => `<p class="letter__p">${p}</p>`).join('')}
+        ${letterCopy.paragraphs
+          .map(
+            (p, i) =>
+              `<p class="letter__p letter-reveal" data-reveal-group="${i + 1}">${p}</p>`,
+          )
+          .join('')}
       </div>
-      <footer class="letter__signoff">
+      <footer class="letter__signoff letter-reveal" data-reveal-group="${letterCopy.paragraphs.length + 1}">
         <span>${letterCopy.signoff}</span>
         <strong>${letterCopy.signature}</strong>
       </footer>

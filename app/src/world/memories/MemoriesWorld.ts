@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import gsap from 'gsap'
 import { memoryVideos } from '../../content/config'
 import { circleMaskFragment, photoRevealVertex } from '../shaders'
 
@@ -10,6 +11,7 @@ interface Portal {
   material: THREE.ShaderMaterial
   playing: boolean
   label: string
+  rest: { x: number; y: number; z: number; s: number }
 }
 
 export class MemoriesWorld {
@@ -17,6 +19,7 @@ export class MemoriesWorld {
   readonly portals: Portal[] = []
   private raycaster = new THREE.Raycaster()
   private pointer = new THREE.Vector2()
+  private entered = false
 
   constructor() {
     this.group.position.set(0, 0, -42)
@@ -47,10 +50,12 @@ export class MemoriesWorld {
 
       const material = new THREE.ShaderMaterial({
         transparent: true,
+        depthWrite: false,
         uniforms: {
           uMap: { value: texture },
           uSoft: { value: 0.06 },
           uBoost: { value: 0 },
+          uOpacity: { value: 0 },
         },
         vertexShader: photoRevealVertex,
         fragmentShader: circleMaskFragment,
@@ -58,7 +63,8 @@ export class MemoriesWorld {
 
       const mesh = new THREE.Mesh(new THREE.CircleGeometry(place.s, 64), material)
       const portalGroup = new THREE.Group()
-      portalGroup.position.set(place.x, place.y, place.z)
+      portalGroup.position.set(place.x * 0.2, place.y * 0.2, place.z - 2)
+      portalGroup.scale.setScalar(0.15)
       portalGroup.add(mesh)
 
       const ring = new THREE.Mesh(
@@ -93,8 +99,59 @@ export class MemoriesWorld {
         material,
         playing: false,
         label: mem.label,
+        rest: place,
       })
     })
+  }
+
+  layoutTargets(): Array<{ x: number; y: number; z: number; s: number }> {
+    return this.portals.map((p) => ({ ...p.rest, z: p.rest.z - 42 }))
+  }
+
+  getWorldPositions(): THREE.Vector3[] {
+    return this.portals.map((p) => {
+      const v = new THREE.Vector3()
+      p.group.getWorldPosition(v)
+      return v
+    })
+  }
+
+  playEntrance(): void {
+    if (this.entered) return
+    this.entered = true
+    this.portals.forEach((p, i) => {
+      gsap.to(p.group.position, {
+        x: p.rest.x,
+        y: p.rest.y,
+        z: p.rest.z,
+        duration: 1.25,
+        delay: i * 0.1,
+        ease: 'back.out(1.5)',
+      })
+      gsap.to(p.group.scale, {
+        x: 1,
+        y: 1,
+        z: 1,
+        duration: 1.15,
+        delay: i * 0.1,
+        ease: 'power3.out',
+      })
+      gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.7, delay: i * 0.1 })
+    })
+  }
+
+  dissolve(): gsap.core.Timeline {
+    const tl = gsap.timeline()
+    this.portals.forEach((p, i) => {
+      tl.to(
+        p.group.scale,
+        { x: 0.05, y: 0.05, z: 0.05, duration: 0.9, ease: 'power3.in' },
+        i * 0.05,
+      )
+      tl.to(p.material.uniforms.uOpacity, { value: 0, duration: 0.7 }, i * 0.05)
+      this.pause(p)
+    })
+    return tl
   }
 
   private play(p: Portal): void {
@@ -157,12 +214,10 @@ export class MemoriesWorld {
   update(time: number): void {
     this.portals.forEach((p, i) => {
       p.texture.needsUpdate = p.playing
+      if (!this.entered) return
       p.group.position.y += Math.sin(time * 0.5 + i) * 0.0006
       const targetScale = p.playing ? 1.08 : 1
-      p.group.scale.lerp(
-        new THREE.Vector3(targetScale, targetScale, targetScale),
-        0.08,
-      )
+      p.group.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.08)
     })
   }
 

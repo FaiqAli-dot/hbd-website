@@ -9,6 +9,7 @@ import { MemoriesWorld } from './memories/MemoriesWorld'
 import { FinaleWorld } from './finale/FinaleWorld'
 import { mountOverlays, type OverlayApi } from '../ui/overlay'
 import { HandGuide } from '../components/hand'
+import { Hand3D } from './Hand3D'
 import { attachSwipeGestures } from '../utils/gestures'
 import { prefersReducedMotion } from '../utils/motion'
 import {
@@ -32,6 +33,7 @@ export class Experience {
   private finale: FinaleWorld
   private ui: OverlayApi
   private hand: HandGuide
+  private hand3d: Hand3D
   private tier: QualityTier
   private clock = new THREE.Clock()
   private pointer = { x: 0, y: 0 }
@@ -45,6 +47,9 @@ export class Experience {
   private extraCleanup: Array<() => void> = []
   private app: HTMLElement
   private unlocked = false
+  private letterTextRevealed = false
+  private transitionFlags = { toLetter: false, toMemories: false, toFinale: false }
+  private lastScrollProgress = 0
 
   constructor(app: HTMLElement) {
     this.app = app
@@ -83,7 +88,14 @@ export class Experience {
     this.letter = new LetterWorld()
     this.memories = new MemoriesWorld()
     this.finale = new FinaleWorld(this.tier)
-    this.scene.add(this.gallery.group, this.letter.group, this.memories.group, this.finale.group)
+    this.hand3d = new Hand3D()
+    this.scene.add(
+      this.gallery.group,
+      this.letter.group,
+      this.memories.group,
+      this.finale.group,
+      this.hand3d.group,
+    )
 
     this.post = new PostFX(this.renderer, this.scene, this.camera, this.tier)
 
@@ -150,6 +162,7 @@ export class Experience {
 
     this.ui.setGalleryComplete(true)
     this.hand.demonstrate('scroll-up')
+    this.hand3d.demonstrate('scroll-up')
     this.ui.setHint(galleryCopy.scrollHint, '')
 
     // Force layout, then refresh ScrollTrigger so scrubbing matches new document height.
@@ -192,6 +205,7 @@ export class Experience {
     const g = this.gallery.expectedGesture()
     if (g === 'scroll-up') {
       this.hand.demonstrate('scroll-up')
+      this.hand3d.demonstrate('scroll-up')
       this.ui.setHint(galleryCopy.scrollHint, '')
       return
     }
@@ -202,6 +216,7 @@ export class Experience {
       down: 'Swipe down',
     }
     this.hand.demonstrate(g)
+    this.hand3d.demonstrate(g)
     this.ui.setHint(galleryCopy.introHint, labels[g])
   }
 
@@ -361,9 +376,50 @@ export class Experience {
 
   private setChapter(chapter: typeof this.chapter): void {
     if (this.chapter === chapter) return
+    const prev = this.chapter
     this.chapter = chapter
     this.atmosphere.setPalette(chapter)
     this.ui.setChapter(chapter)
+
+    if (chapter !== 'gallery') this.hand3d.setVisible(false)
+    else this.hand3d.setVisible(true)
+
+    if (chapter === 'letter' && !this.transitionFlags.toLetter) {
+      this.transitionFlags.toLetter = true
+      if (!prefersReducedMotion()) this.gallery.gatherForLetter()
+      this.letter.playEntrance()
+      this.revealLetterText()
+    }
+
+    if (chapter === 'memories' && !this.transitionFlags.toMemories) {
+      this.transitionFlags.toMemories = true
+      if (!prefersReducedMotion()) {
+        this.letter.expandTowardPortals(this.memories.layoutTargets())
+      }
+      this.memories.playEntrance()
+    }
+
+    if (chapter === 'finale' && !this.transitionFlags.toFinale) {
+      this.transitionFlags.toFinale = true
+      const worldPos = this.memories.getWorldPositions()
+      this.finale.absorbFromPortals(worldPos)
+      if (!prefersReducedMotion()) this.memories.dissolve()
+      this.finale.play(this.camera)
+    }
+
+    void prev
+  }
+
+  private revealLetterText(): void {
+    if (this.letterTextRevealed) return
+    this.letterTextRevealed = true
+    const nodes = Array.from(document.querySelectorAll<HTMLElement>('.letter-reveal'))
+    nodes.forEach((el, i) => {
+      window.setTimeout(
+        () => el.classList.add('is-shown'),
+        prefersReducedMotion() ? 0 : 180 + i * 220,
+      )
+    })
   }
 
   private onResize = (): void => {
@@ -395,13 +451,20 @@ export class Experience {
 
     // Subtle idle drift in gallery (before the journey unlocks)
     if (!this.unlocked && this.chapter === 'gallery' && !prefersReducedMotion()) {
-      this.camera.position.x += (this.pointer.x * 0.15 - this.camera.position.x) * 0.02
+      this.camera.position.x += (this.pointer.x * 0.12 - this.camera.position.x) * 0.02
       this.camera.position.y += (0.15 + this.pointer.y * 0.08 - this.camera.position.y) * 0.02
       this.camera.lookAt(0, 0.1, 0)
     }
 
+    // Motion-linked chromatic aberration
+    const scrollDelta = Math.abs(this.scrollProgress - this.lastScrollProgress)
+    this.lastScrollProgress = this.scrollProgress
+    const speed = !this.unlocked
+      ? Math.min(1, Math.hypot(this.pointer.x, this.pointer.y) * 0.35)
+      : Math.min(1, scrollDelta * 10)
+    this.post.setMotionAmount(speed)
+
     this.renderer.autoClear = true
-    // Draw fullscreen atmosphere first via scene background mesh
     this.post.render(t)
   }
 
@@ -417,6 +480,7 @@ export class Experience {
     this.letter.dispose()
     this.memories.dispose()
     this.finale.dispose()
+    this.hand3d.destroy()
     this.atmosphere.dispose()
     this.post.dispose()
     this.renderer.dispose()
