@@ -550,17 +550,6 @@ html.gallery-complete .gallery-hud .hand {
   height: 120vh;
 }
 
-.site-footer {
-  position: relative;
-  z-index: 2;
-  padding: 2rem 1.25rem 3rem;
-  text-align: center;
-  font-size: 0.72rem;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(243, 238, 230, 0.35);
-}
-
 .fallback {
   max-width: 48rem;
   margin: 0 auto;
