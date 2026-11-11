@@ -31,12 +31,6 @@ async function mountApp(): Promise<void> {
     getDragState: () => experience.getDragState(),
   }
 
-  const footer = document.createElement('footer')
-  footer.className = 'site-footer'
-  footer.innerHTML =
-    '<p>Made with care · Replace assets in <code>app/src/content/config.ts</code></p>'
-  app.appendChild(footer)
-
   window.addEventListener(
     'beforeunload',
     () => {

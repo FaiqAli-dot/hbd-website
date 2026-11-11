@@ -210,9 +210,10 @@ export const finaleCopy = {
 }
 
 export const galleryCopy = {
-  introHint: 'Follow the hand',
-  scrollHint: 'Now, scroll up…',
-  continueLabel: 'Continue',
+  /** Quiet bottom-centre cue — direction filled in by Experience (e.g. "swipe →") */
+  introHint: 'swipe →',
+  scrollHint: 'scroll ↑',
+  continueLabel: 'continue',
   undoLabel: 'Go back',
 }
 
