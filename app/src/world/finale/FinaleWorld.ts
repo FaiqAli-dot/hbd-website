@@ -62,6 +62,10 @@ export class FinaleWorld {
   private seed = 12345
   private gatherTargets: THREE.Vector3[] = []
   private fxCam: THREE.OrthographicCamera
+  /** Per-glyph masks + outlines for shared-glyph-mask reveal */
+  private glyphMasks: Array<SVGMaskElement | null> = []
+  private glyphOpened = new Set<number>()
+  private glyphStrokeIndex: number[] = []
 
   constructor(tier: QualityTier) {
     this.group.position.set(0, 0, -56)
@@ -288,6 +292,8 @@ export class FinaleWorld {
     this.writeStartedAt = performance.now()
     this.lastStepWall = this.writeStartedAt
     this.tl?.seek(0)
+    // Capture/debug bridge for Playwright stills
+    ;(window as unknown as { __finale?: FinaleWorld }).__finale = this
   }
 
   private mountSvgDom(): void {
@@ -336,16 +342,18 @@ export class FinaleWorld {
     this.nibEl = nib
 
     const portrait = window.innerWidth / window.innerHeight < 1
-    const BIRTH_X = 296
+    // Align Birthday under Happy on portrait using the first Birthday stroke x
+    const birthStroke = (STROKES.strokes as Array<{ word: number; start: number[] }>).find((s) => s.word === 1)
+    const BIRTH_X = birthStroke?.start?.[0] ?? 296
     const wordTf = portrait
-      ? [`translate(70,0)`, `translate(${-BIRTH_X + 40},132)`]
+      ? [`translate(40,0)`, `translate(${-BIRTH_X + 48},128)`]
       : ['', '']
     let [bx, by, bw, bh] = STROKES.bbox as number[]
     if (portrait) {
       bx = -4
       by = -10
-      bw = 392
-      bh = 290
+      bw = Math.max(420, bw * 0.55)
+      bh = 300
     }
     svg.setAttribute('viewBox', `${bx} ${by} ${bw} ${bh}`)
 
@@ -356,8 +364,93 @@ export class FinaleWorld {
       return g
     })
 
-    this.strokes = (STROKES.strokes as Array<Omit<StrokeRuntime, 'mp' | 'L' | 'obj' | 'el' | 't0' | 't1'>>).map(
-      (s, i) => {
+    const glyphOutlines = (STROKES as { glyphOutlines?: string[] }).glyphOutlines
+    const sharedGlyph =
+      STROKES.reveal === 'shared-glyph-mask' && Array.isArray(glyphOutlines) && glyphOutlines.length > 0
+    const sharedWord =
+      !sharedGlyph && STROKES.reveal === 'shared-word-mask' && Array.isArray(STROKES.wordOutlines)
+
+    const glyphMasks: Array<SVGMaskElement | null> = sharedGlyph
+      ? glyphOutlines!.map(() => null)
+      : []
+    const glyphInk: Array<SVGPathElement | null> = sharedGlyph ? glyphOutlines!.map(() => null) : []
+    const wordMasks: Array<SVGMaskElement | null> = [null, null]
+    const wordInk: Array<SVGPathElement | null> = [null, null]
+
+    this.glyphMasks = []
+    this.glyphOpened = new Set()
+    this.glyphStrokeIndex = []
+
+    if (sharedGlyph) {
+      glyphOutlines!.forEach((d, gi) => {
+        const meta = (STROKES as { glyphMeta?: Array<{ word: number }> }).glyphMeta?.[gi]
+        const word = meta?.word ?? 0
+        const m = document.createElementNS(NS, 'mask')
+        m.id = `fgm${gi}`
+        m.setAttribute('maskUnits', 'userSpaceOnUse')
+        m.setAttribute('x', '-1000')
+        m.setAttribute('y', '-1000')
+        m.setAttribute('width', '4000')
+        m.setAttribute('height', '4000')
+        maskG.appendChild(m)
+        glyphMasks[gi] = m
+        this.glyphMasks[gi] = m
+
+        const p = document.createElementNS(NS, 'path')
+        p.setAttribute('d', d)
+        p.setAttribute('fill', 'url(#inkG)')
+        p.setAttribute('fill-rule', 'nonzero')
+        p.setAttribute('mask', `url(#fgm${gi})`)
+        this.wordGroups[word].appendChild(p)
+        glyphInk[gi] = p
+      })
+    } else if (sharedWord) {
+      for (let wi = 0; wi < 2; wi++) {
+        const m = document.createElementNS(NS, 'mask')
+        m.id = `fwm${wi}`
+        m.setAttribute('maskUnits', 'userSpaceOnUse')
+        m.setAttribute('x', '-1000')
+        m.setAttribute('y', '-1000')
+        m.setAttribute('width', '4000')
+        m.setAttribute('height', '4000')
+        maskG.appendChild(m)
+        wordMasks[wi] = m
+
+        const p = document.createElementNS(NS, 'path')
+        p.setAttribute('d', STROKES.wordOutlines![wi] || '')
+        p.setAttribute('fill', 'url(#inkG)')
+        p.setAttribute('fill-rule', 'nonzero')
+        p.setAttribute('mask', `url(#fwm${wi})`)
+        this.wordGroups[wi].appendChild(p)
+        wordInk[wi] = p
+      }
+    }
+
+    this.strokes = (
+      STROKES.strokes as Array<
+        Omit<StrokeRuntime, 'mp' | 'L' | 'obj' | 'el' | 't0' | 't1'> & { glyph?: number }
+      >
+    ).map((s, i) => {
+      const mp = document.createElementNS(NS, 'path')
+      mp.setAttribute('d', s.center)
+      mp.setAttribute('fill', 'none')
+      mp.setAttribute('stroke', '#fff')
+      const shared = sharedGlyph || sharedWord
+      const sw = Math.max(s.wmax, 4) + (shared && s.kind !== 'swash' ? 5.2 : 2.8)
+      mp.setAttribute('stroke-width', sw.toFixed(2))
+      mp.setAttribute('stroke-linecap', 'round')
+      mp.setAttribute('stroke-linejoin', 'round')
+
+      let el: SVGPathElement
+      const gi = s.glyph ?? -1
+      this.glyphStrokeIndex[i] = gi
+      if (sharedGlyph && s.kind !== 'swash' && gi >= 0 && glyphMasks[gi]) {
+        glyphMasks[gi]!.appendChild(mp)
+        el = glyphInk[gi]!
+      } else if (sharedWord && s.kind !== 'swash' && wordMasks[s.word]) {
+        wordMasks[s.word]!.appendChild(mp)
+        el = wordInk[s.word]!
+      } else {
         const m = document.createElementNS(NS, 'mask')
         m.id = `fm${i}`
         m.setAttribute('maskUnits', 'userSpaceOnUse')
@@ -365,34 +458,21 @@ export class FinaleWorld {
         m.setAttribute('y', '-1000')
         m.setAttribute('width', '4000')
         m.setAttribute('height', '4000')
-        const mp = document.createElementNS(NS, 'path')
-        mp.setAttribute('d', s.center)
-        mp.setAttribute('fill', 'none')
-        mp.setAttribute('stroke', '#fff')
-        // Capitals use solid silhouettes — mask stroke must cover the full glyph
-        // width or the letter reads as fragmented scraps.
-        const isCap = i === 0 || i === 8
-        const sw = isCap ? 36 : Math.max(s.wmax, 6) + 3.5
-        mp.setAttribute('stroke-width', sw.toFixed(2))
-        mp.setAttribute('stroke-linecap', isCap ? 'round' : 'butt')
-        mp.setAttribute('stroke-linejoin', 'round')
         m.appendChild(mp)
         maskG.appendChild(m)
 
-        const p = document.createElementNS(NS, 'path')
-        p.setAttribute('d', s.outline)
-        p.setAttribute('fill', 'url(#inkG)')
-        const fillRule = (s as { fillRule?: string }).fillRule
-        if (fillRule) p.setAttribute('fill-rule', fillRule)
-        p.setAttribute('mask', `url(#fm${i})`)
-        this.wordGroups[s.word].appendChild(p)
+        el = document.createElementNS(NS, 'path')
+        el.setAttribute('d', s.outline || s.center)
+        el.setAttribute('fill', 'url(#inkG)')
+        el.setAttribute('mask', `url(#fm${i})`)
+        this.wordGroups[s.word].appendChild(el)
+      }
 
-        const L = mp.getTotalLength()
-        mp.style.strokeDasharray = `${L} ${L + 10}`
-        mp.style.strokeDashoffset = String(L)
-        return { ...s, mp, L, obj: { p: 0 }, el: p, t0: 0, t1: 0 }
-      },
-    )
+      const L = mp.getTotalLength()
+      mp.style.strokeDasharray = `${L} ${L + 10}`
+      mp.style.strokeDashoffset = String(L)
+      return { ...s, mp, L, obj: { p: 0 }, el, t0: 0, t1: 0 }
+    })
 
     // Message words
     const COPY = {
@@ -546,6 +626,19 @@ export class FinaleWorld {
     alp.needsUpdate = true
   }
 
+  private openGlyphMask(gi: number): void {
+    if (this.glyphOpened.has(gi) || !this.glyphMasks[gi]) return
+    const outline = (STROKES as { glyphOutlines?: string[] }).glyphOutlines?.[gi]
+    if (!outline) return
+    const fill = document.createElementNS(NS, 'path')
+    fill.setAttribute('d', outline)
+    fill.setAttribute('fill', '#fff')
+    fill.setAttribute('fill-rule', 'nonzero')
+    fill.setAttribute('data-glyph-flood', '1')
+    this.glyphMasks[gi]!.appendChild(fill)
+    this.glyphOpened.add(gi)
+  }
+
   private stepWriting(_frameDt: number): void {
     if (!this.tl || !this.writing) return
     // Drive from wall clock so low headless FPS cannot crawl the handwriting.
@@ -557,10 +650,38 @@ export class FinaleWorld {
     void _frameDt
 
     let active: StrokeRuntime | null = null
-    for (const s of this.strokes) {
+    for (let i = 0; i < this.strokes.length; i++) {
+      const s = this.strokes[i]
       const p = s.obj.p
       s.mp.style.strokeDashoffset = (s.L * (1 - p)).toFixed(2)
       if (p > 0 && p < 1) active = s
+      // When a glyph's pen strokes finish, flood its mask so the true font outline is complete
+      const gi = this.glyphStrokeIndex[i] ?? -1
+      if (gi >= 0 && p >= 0.999 && !this.glyphOpened.has(gi) && this.glyphMasks[gi]) {
+        const peers = this.strokes.filter((_, j) => this.glyphStrokeIndex[j] === gi)
+        if (peers.every((ps) => ps.obj.p >= 0.999)) {
+          this.openGlyphMask(gi)
+        }
+      }
+    }
+
+    // Safety: open any glyph that has no pen strokes once the previous glyph is open,
+    // and open remaining glyphs once ink is done.
+    const nGlyphs = this.glyphMasks.length
+    if (nGlyphs > 0) {
+      for (let gi = 0; gi < nGlyphs; gi++) {
+        if (this.glyphOpened.has(gi) || !this.glyphMasks[gi]) continue
+        const peers = this.strokes.filter((_, j) => this.glyphStrokeIndex[j] === gi)
+        if (peers.length === 0) {
+          const prevOpen = gi === 0 || this.glyphOpened.has(gi - 1)
+          if (prevOpen) this.openGlyphMask(gi)
+        }
+      }
+      if (ms >= (this.marks.inkDone ?? 1e12) - 30) {
+        for (let gi = 0; gi < nGlyphs; gi++) {
+          if (!this.glyphOpened.has(gi)) this.openGlyphMask(gi)
+        }
+      }
     }
 
     let nx: number
@@ -653,18 +774,32 @@ export class FinaleWorld {
     }
   }
 
-  /** Seek writing animation to a fraction (0–1 of ink+message) for captures */
-  seekFraction(frac: number): void {
-    if (!this.tl) {
-      this.mountAndWrite()
-    }
+  /** Seek writing animation to absolute ms (or fraction 0–1 of ink+message) for captures */
+  seekTo(msOrFrac: number, asFraction = false): void {
     if (!this.tl) return
     const end = this.marks.end ?? 12300
-    const ms = Math.max(0, Math.min(end, frac * end))
+    const ms = asFraction
+      ? Math.max(0, Math.min(end, msOrFrac * end))
+      : Math.max(0, Math.min(end, msOrFrac))
+    // Reset glyph flood fills so mid-seek stills don't show premature complete letters
+    for (const m of this.glyphMasks) {
+      if (!m) continue
+      ;[...m.querySelectorAll('path[data-glyph-flood]')].forEach((el) => el.remove())
+    }
+    this.glyphOpened.clear()
     this.writeStartedAt = performance.now() - ms
     this.lastStepWall = performance.now()
     this.writing = true
     this.stepWriting(0.008)
+  }
+
+  seekFraction(frac: number): void {
+    this.seekTo(frac, true)
+  }
+
+  /** Capture/debug hook */
+  getMarks(): Record<string, number> {
+    return { ...this.marks }
   }
 
   update(time: number, dt = 1 / 60): void {
