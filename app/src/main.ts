@@ -26,6 +26,10 @@ async function mountApp(): Promise<void> {
 
   const { Experience } = await import('./world/Experience')
   const experience = new Experience(app)
+  // Test/debug hook for drag-scrub verifies (no public API surface otherwise)
+  ;(window as unknown as { __hbd?: { getDragState: () => unknown } }).__hbd = {
+    getDragState: () => experience.getDragState(),
+  }
 
   const footer = document.createElement('footer')
   footer.className = 'site-footer'

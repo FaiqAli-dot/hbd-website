@@ -316,10 +316,11 @@ export class FinaleWorld {
     maskG.setAttribute('id', 'finale-masks')
     svg.appendChild(maskG)
 
+    // Soft wash kept very light so capitals stay crisp (was ghosting H/B)
     const inkUseSoft = document.createElementNS(NS, 'use')
     inkUseSoft.setAttribute('href', '#finale-ink')
     inkUseSoft.setAttribute('filter', 'url(#soft)')
-    inkUseSoft.setAttribute('opacity', '0.22')
+    inkUseSoft.setAttribute('opacity', '0.1')
     svg.appendChild(inkUseSoft)
 
     const inkG = document.createElementNS(NS, 'g')
@@ -368,8 +369,12 @@ export class FinaleWorld {
         mp.setAttribute('d', s.center)
         mp.setAttribute('fill', 'none')
         mp.setAttribute('stroke', '#fff')
-        mp.setAttribute('stroke-width', (s.wmax + 2.2).toFixed(2))
-        mp.setAttribute('stroke-linecap', 'butt')
+        // Capitals use solid silhouettes — mask stroke must cover the full glyph
+        // width or the letter reads as fragmented scraps.
+        const isCap = i === 0 || i === 8
+        const sw = isCap ? 36 : Math.max(s.wmax, 6) + 3.5
+        mp.setAttribute('stroke-width', sw.toFixed(2))
+        mp.setAttribute('stroke-linecap', isCap ? 'round' : 'butt')
         mp.setAttribute('stroke-linejoin', 'round')
         m.appendChild(mp)
         maskG.appendChild(m)
@@ -377,6 +382,8 @@ export class FinaleWorld {
         const p = document.createElementNS(NS, 'path')
         p.setAttribute('d', s.outline)
         p.setAttribute('fill', 'url(#inkG)')
+        const fillRule = (s as { fillRule?: string }).fillRule
+        if (fillRule) p.setAttribute('fill-rule', fillRule)
         p.setAttribute('mask', `url(#fm${i})`)
         this.wordGroups[s.word].appendChild(p)
 

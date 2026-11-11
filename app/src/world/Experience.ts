@@ -289,6 +289,11 @@ export class Experience {
     }
   }
 
+  /** Exposed for drag-scrub verify scripts via window.__hbd */
+  getDragState(): ReturnType<GalleryWorld['getDragState']> & { convention: string } {
+    return { ...this.gallery.getDragState(), convention: 'drag-world' }
+  }
+
   private bindGyro(): void {
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.beta == null || e.gamma == null) return
@@ -308,12 +313,60 @@ export class Experience {
   }
 
   private bindInput(): void {
+    // Stage must not scroll under gallery drags (iOS)
+    this.app.style.touchAction = 'none'
+    this.canvas.style.touchAction = 'none'
+
+    /**
+     * Drag-world convention (SWIPE_CONVENTION='drag-world'):
+     * content feels glued to the finger — finger left → world/content left →
+     * camera travels right along the Bezier toward the next print.
+     */
+    const COMMIT_DIST = 0.38 // full commit ≈ 38% of viewport axis
+    const COMMIT_PROGRESS = 0.3
+    const FLICK_VX = 780
+    let scrubExpected: GestureDirection | 'scroll-up' | null = null
+    let rubber = 0
+
+    const directionFromDelta = (dx: number, dy: number, axis: 'x' | 'y' | null): GestureDirection => {
+      if (axis === 'x') return dx < 0 ? 'left' : 'right'
+      if (axis === 'y') return dy < 0 ? 'up' : 'down'
+      return Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : dy < 0 ? 'up' : 'down'
+    }
+
+    /** Progress in [0,1] for the expected gesture; rubber-band (<0 mapped) if wrong way */
+    const progressForDrag = (
+      expected: GestureDirection,
+      dx: number,
+      dy: number,
+      axis: 'x' | 'y' | null,
+    ): { progress: number; wrong: boolean; signed: number } => {
+      const vw = Math.max(1, window.innerWidth)
+      const vh = Math.max(1, window.innerHeight)
+      // Finger delta that advances the expected gesture under drag-world:
+      // left expect → finger moves left (dx<0); up expect → finger moves up (dy<0)
+      let signed = 0
+      if (expected === 'left' || expected === 'right') {
+        if (axis === 'y') return { progress: 0, wrong: true, signed: 0 }
+        signed = expected === 'left' ? -dx / (COMMIT_DIST * vw) : dx / (COMMIT_DIST * vw)
+      } else {
+        if (axis === 'x') return { progress: 0, wrong: true, signed: 0 }
+        signed = expected === 'up' ? -dy / (COMMIT_DIST * vh) : dy / (COMMIT_DIST * vh)
+      }
+      if (signed < 0) {
+        // Rubber-band: small give, never a dead screen
+        const give = -signed * 0.18
+        return { progress: Math.min(0.12, give), wrong: true, signed }
+      }
+      return { progress: Math.min(1, signed), wrong: false, signed }
+    }
+
     this.detachGestures = attachSwipeGestures(this.app, {
       threshold: 48,
       enabled: () => !this.unlocked && this.chapter === 'gallery',
       onGesture: (dir) => {
+        // Keyboard/wheel still use animated tryGesture; drag uses scrub handlers below
         if (this.unlocked) return
-        // After 08/08, swipe-up triggers the dolly-zoom pull-out
         if (this.awaitingPullOut && dir === 'up') {
           this.beginPullOutAndUnlock()
           return
@@ -321,6 +374,44 @@ export class Experience {
         if (this.awaitingPullOut) return
         const ok = this.gallery.tryGesture(dir)
         if (!ok) this.gallery.shakeHint(this.gallery.group)
+      },
+      onDragStart: () => {
+        if (this.unlocked || this.chapter !== 'gallery') return
+        if (this.awaitingPullOut) return
+        rubber = 0
+        const started = this.gallery.beginScrub()
+        scrubExpected = started?.expected ?? null
+        if (!started) scrubExpected = null
+      },
+      onDragMove: ({ dx, dy, axis }) => {
+        if (!scrubExpected || scrubExpected === 'scroll-up') return
+        const { progress, wrong } = progressForDrag(scrubExpected, dx, dy, axis)
+        rubber = wrong ? progress : 0
+        this.gallery.scrubTo(progress)
+      },
+      onDragEnd: ({ dx, dy, axis, vx, vy }) => {
+        if (this.awaitingPullOut) {
+          const dir = directionFromDelta(dx, dy, axis)
+          if (dir === 'up') this.beginPullOutAndUnlock()
+          return
+        }
+        if (!scrubExpected || scrubExpected === 'scroll-up') {
+          this.gallery.cancelScrub()
+          scrubExpected = null
+          return
+        }
+        const { progress, wrong } = progressForDrag(scrubExpected, dx, dy, axis)
+        const flick =
+          scrubExpected === 'left' || scrubExpected === 'right'
+            ? (scrubExpected === 'left' ? -vx : vx)
+            : scrubExpected === 'up'
+              ? -vy
+              : vy
+        const commit = !wrong && (progress >= COMMIT_PROGRESS || flick > FLICK_VX)
+        this.gallery.endScrub({ commit, velocity: flick })
+        if (!commit && wrong) this.gallery.shakeHint(this.gallery.group)
+        scrubExpected = null
+        void rubber
       },
     })
 
@@ -593,8 +684,9 @@ export class Experience {
       this.camera.position.y += (ty - this.camera.position.y) * 0.1
       this.camera.position.z += (tz - this.camera.position.z) * 0.12
       // Hold the collage FOV while still on gallery; only widen after Ch2+
+      const collageFov = this.gallery.getCollageCamera().fov
       const targetFov =
-        this.chapter === 'finale' ? 42 : this.chapter === 'gallery' ? 28 : 44
+        this.chapter === 'finale' ? 42 : this.chapter === 'gallery' ? collageFov : 44
       if (Math.abs(this.camera.fov - targetFov) > 0.05) {
         this.camera.fov += (targetFov - this.camera.fov) * 0.06
         this.camera.updateProjectionMatrix()

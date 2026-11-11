@@ -591,12 +591,13 @@ html.gallery-complete .gallery-hud .hand {
   .gallery-hud__guide {
     right: 50%;
     top: auto;
-    bottom: 16vh;
+    bottom: 14vh;
     translate: 50% 0;
   }
 
+  /* After collage settle: keep CONTINUE in plum margin under the grid */
   .gallery-hud.is-complete .gallery-hud__guide {
-    bottom: 20vh;
+    bottom: 9vh;
   }
 
   .hand {

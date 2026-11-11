@@ -1,40 +1,31 @@
 /**
- * Hand-author elegant copperplate-leaning centerlines for H, B, y, d
- * while keeping true writing order. Rebuilds pointed-pen outlines.
+ * Capitals must OCR as "Happy Birthday" through the finale MASK.
+ * Keep PR6 lowercase; replace H/B outlines with clear silhouettes and
+ * matching centerlines for the mask reveal / nib.
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { execSync } from 'node:child_process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const strokesPath = path.resolve(__dirname, '../src/world/finale/strokesData.js')
 
-// Start from approved Hershey base
-fs.copyFileSync(
-  '/tmp/approved-design/storyboard/finale/strokes.js',
-  strokesPath.replace(/strokesData\.js$/, '_raw.js'),
-)
-let raw = fs.readFileSync('/tmp/approved-design/storyboard/finale/strokes.js', 'utf8')
-raw = raw.replace(/^window\.STROKES=/, 'const STROKES=') + '\nexport default STROKES;\n'
-fs.writeFileSync(strokesPath, raw)
-
-const mod = await import(pathToFileURL(strokesPath).href + '?v=' + Date.now())
-const S = structuredClone(mod.default)
-
-function parsePath(d) {
-  return d
-    .replace(/[MZ]/g, '')
-    .trim()
-    .split(/\s*L\s*|\s+/)
-    .filter(Boolean)
-    .map((tok) => tok.split(',').map(Number))
-}
+const pr6Src = execSync('git show 7b47d64:app/src/world/finale/strokesData.js', {
+  encoding: 'utf8',
+  maxBuffer: 20e6,
+})
+fs.writeFileSync(strokesPath, pr6Src)
+const S = structuredClone((await import(pathToFileURL(strokesPath).href + '?v=' + Date.now())).default)
 
 function pathd(pts, close = false) {
-  return pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ') + (close ? ' Z' : '')
+  return (
+    pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(2)},${y.toFixed(2)}`).join(' ') +
+    (close ? ' Z' : '')
+  )
 }
 
-function cubic(p0, p1, p2, p3, n = 40) {
+function cubic(p0, p1, p2, p3, n = 20) {
   const out = []
   for (let i = 0; i <= n; i++) {
     const t = i / n
@@ -47,36 +38,7 @@ function cubic(p0, p1, p2, p3, n = 40) {
   return out
 }
 
-function catmull(pts, nPer = 12) {
-  if (pts.length < 2) return pts
-  const out = [pts[0]]
-  for (let i = 0; i < pts.length - 1; i++) {
-    const p0 = pts[Math.max(0, i - 1)]
-    const p1 = pts[i]
-    const p2 = pts[i + 1]
-    const p3 = pts[Math.min(pts.length - 1, i + 2)]
-    for (let j = 1; j <= nPer; j++) {
-      const t = j / nPer
-      const t2 = t * t
-      const t3 = t2 * t
-      out.push([
-        0.5 *
-          (2 * p1[0] +
-            (-p0[0] + p2[0]) * t +
-            (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 +
-            (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-        0.5 *
-          (2 * p1[1] +
-            (-p0[1] + p2[1]) * t +
-            (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 +
-            (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
-      ])
-    }
-  }
-  return out
-}
-
-function resample(pts, step = 0.7) {
+function resample(pts, step = 0.55) {
   if (pts.length < 2) return pts
   const out = [pts[0]]
   let carry = 0
@@ -96,9 +58,6 @@ function resample(pts, step = 0.7) {
     }
     carry = (carry + dist) % step
   }
-  const last = pts[pts.length - 1]
-  const tip = out[out.length - 1]
-  if (Math.hypot(tip[0] - last[0], tip[1] - last[1]) > 0.15) out.push(last)
   return out
 }
 
@@ -108,148 +67,89 @@ function lengthOf(pts) {
   return L
 }
 
-function outline(pts) {
-  const SLANT = (58 * Math.PI) / 180
-  const down = [Math.cos(SLANT), Math.sin(SLANT)]
-  const HAIR = 0.72
-  const SHADE = 6.2
-  const N = pts.length
-  const tang = pts.map((_, i) => {
-    const a = pts[Math.max(0, i - 1)]
-    const b = pts[Math.min(N - 1, i + 1)]
-    const dx = b[0] - a[0]
-    const dy = b[1] - a[1]
-    const len = Math.hypot(dx, dy) || 1
-    return [dx / len, dy / len]
-  })
-  const pressure = tang.map((t) => {
-    const dot = t[0] * down[0] + t[1] * down[1]
-    return Math.pow(Math.max(0, Math.min(1, (dot - 0.08) / 0.82)), 1.5)
-  })
-  const k = 8
-  const smooth = pressure.map((_, i) => {
-    let s = 0
-    let c = 0
-    for (let j = -k; j <= k; j++) {
-      const idx = Math.max(0, Math.min(N - 1, i + j))
-      s += pressure[idx]
-      c++
-    }
-    return s / c
-  })
-  const left = []
-  const right = []
-  let wmax = 0
-  for (let i = 0; i < N; i++) {
-    const s = i / (N - 1)
-    const taper = Math.min(1, Math.min((s * N) / 7 + 0.18, ((1 - s) * N) / 8 + 0.16))
-    const w = ((HAIR + SHADE * smooth[i]) * taper) / 2
-    wmax = Math.max(wmax, w * 2)
-    const nx = -tang[i][1]
-    const ny = tang[i][0]
-    left.push([pts[i][0] + nx * w, pts[i][1] + ny * w])
-    right.push([pts[i][0] - nx * w, pts[i][1] - ny * w])
+function ellipse(cx, cy, rx, ry, n = 36, reverse = false) {
+  const pts = []
+  for (let i = 0; i <= n; i++) {
+    const t = reverse ? 1 - i / n : i / n
+    const a = t * Math.PI * 2 - Math.PI / 2
+    pts.push([cx + Math.cos(a) * rx, cy + Math.sin(a) * ry])
   }
-  return { poly: left.concat(right.reverse()), wmax }
+  return pts
 }
 
-function rebuild(stroke, centerPts) {
-  const pts = resample(centerPts, 0.68)
-  const { poly, wmax } = outline(pts)
-  const L = lengthOf(pts)
-  return {
-    ...stroke,
-    center: pathd(pts),
-    outline: pathd(poly, true),
-    len: Math.round(L * 100) / 100,
-    start: pts[0].map((v) => Math.round(v * 100) / 100),
-    end: pts[pts.length - 1].map((v) => Math.round(v * 100) / 100),
-    wmax: Math.round(wmax * 100) / 100,
-  }
+// Clear H silhouette with thick crossbar
+const Houtline = pathd(
+  [
+    [5, 1],
+    [12.5, 1],
+    [12.5, 24],
+    [21.5, 24],
+    [21.5, 1],
+    [29, 1],
+    [29, 58],
+    [21.5, 58],
+    [21.5, 34],
+    [12.5, 34],
+    [12.5, 58],
+    [5, 58],
+  ],
+  true,
+)
+const Hcenter = resample(
+  [
+    ...cubic([8.5, 1], [8.5, 20], [8.5, 40], [8.5, 58], 22),
+    ...cubic([8.5, 58], [8.5, 44], [8.5, 36], [8.5, 29], 12).slice(1),
+    ...cubic([8.5, 29], [14, 29], [19, 29], [25.5, 29], 14).slice(1),
+    ...cubic([25.5, 29], [25.5, 40], [25.5, 50], [25.5, 58], 14).slice(1),
+    ...cubic([25.5, 58], [23, 48], [21, 40], [20.1, 35.7], 10).slice(1),
+  ],
+  0.55,
+)
+S.strokes[0] = {
+  ...S.strokes[0],
+  outline: Houtline,
+  center: pathd(Hcenter),
+  len: Math.round(lengthOf(Hcenter) * 100) / 100,
+  start: Hcenter[0].map((v) => Math.round(v * 100) / 100),
+  end: Hcenter[Hcenter.length - 1].map((v) => Math.round(v * 100) / 100),
+  wmax: 9,
 }
 
-/** Capital H — entrance hairline + shaded stem (stroke 0 of Happy) */
-function elegantH() {
-  // Confident pointed-pen H entry that lands into the existing 'a' connection zone
-  const entry = cubic([18.2, 22], [10, 12], [6, 28], [12, 48], 28)
-  const stem = cubic([12, 48], [14, 70], [16, 88], [8, 100], 36)
-  // Small exit toward the bowl (stroke 1 still owns the arch)
-  const exit = cubic([8, 100], [14, 92], [20, 78], [22, 58], 20)
-  return resample([...entry, ...stem.slice(1), ...exit.slice(1)], 0.65)
+// Clear B: stem + two bowls with open counters (evenodd)
+const Bstem = [
+  [301, 2],
+  [308.5, 2],
+  [308.5, 60],
+  [301, 60],
+]
+const BuOut = ellipse(320, 16, 12, 12, 36)
+const BuIn = ellipse(320, 16, 5.5, 5.2, 28, true)
+const BlOut = ellipse(321, 44, 13.5, 13, 36)
+const BlIn = ellipse(321, 44, 6.2, 5.8, 28, true)
+const Boutline = [pathd(Bstem, true), pathd(BuOut, true), pathd(BuIn, true), pathd(BlOut, true), pathd(BlIn, true)].join(
+  ' ',
+)
+S.strokes[8] = {
+  ...S.strokes[8],
+  outline: Boutline,
+  wmax: 8.5,
+  fillRule: 'evenodd',
 }
 
-/** Happy / Birthday y descender — graceful loop below the baseline */
-function elegantY(start, end) {
-  const top = start
-  // Long confident descender: shaded downstroke into a full oval, hairline exit
-  const down = cubic(top, [top[0] + 5, top[1] + 22], [top[0] + 3, 112], [top[0] - 10, 132], 36)
-  const loop = cubic(
-    down[down.length - 1],
-    [top[0] - 28, 144],
-    [top[0] - 20, 104],
-    end ?? [top[0] + 10, 46],
-    40,
-  )
-  return resample([...down, ...loop.slice(1)], 0.62)
+// Clearer i-dot
+S.strokes[17] = {
+  ...S.strokes[17],
+  center: 'M358.00,18.00 L361.50,15.00',
+  outline:
+    'M355.5,16.5 C355.5,13.5 358.5,11.5 361.5,13.5 C364.5,15.5 363.5,19.5 360.5,20.5 C357.5,21.5 355.5,19.5 355.5,16.5 Z',
+  len: 8,
+  wmax: 5,
 }
 
-/** Capital B of Birthday — confident pointed-pen stem (bowls stay on stroke 9) */
-function elegantB(start, end) {
-  const s = start ?? [320.55, 7.77]
-  const tip = end ?? [321.88, 30.3]
-  // Hairline entry into a tall shaded stem with a slight pen flourish at the foot
-  const entry = cubic([s[0] - 6, s[1] + 14], [s[0] - 10, s[1] + 4], [s[0] - 2, s[1] - 2], s, 18)
-  const stem = cubic(s, [s[0] - 1.5, 32], [s[0] - 0.5, 72], [s[0] + 1.2, 102], 44)
-  const foot = cubic(stem[stem.length - 1], [s[0] + 6, 96], [tip[0] + 4, tip[1] + 8], tip, 22)
-  return resample([...entry, ...stem.slice(1), ...foot.slice(1)], 0.62)
-}
-
-/** Tall d ascender — soft rise, shaded down, into oval body start */
-function elegantD(start, end) {
-  const s = start
-  // Higher pointed-pen apex, then a decisive shaded descent into the bowl
-  const up = cubic(s, [s[0] - 3, 18], [s[0] - 6, -12], [s[0] - 2, -18], 30)
-  const down = cubic(up[up.length - 1], [s[0] + 1, 16], [s[0] + 5, 68], [s[0] + 4, 94], 40)
-  const into = cubic(down[down.length - 1], [s[0] + 12, 102], [s[0] + 18, 72], end ?? [s[0] + 10, 48], 28)
-  return resample([...up, ...down.slice(1), ...into.slice(1)], 0.62)
-}
-
-// Soften every ink stroke first (trim early-ink artefacts)
-for (let i = 0; i < S.strokes.length; i++) {
-  const s = S.strokes[i]
-  let pts = parsePath(s.center)
-  if (s.kind === 'ink' && pts.length > 18) pts = pts.slice(3)
-  else if (pts.length > 10) pts = pts.slice(1)
-  S.strokes[i] = rebuild(s, catmull(pts, 8))
-}
-
-// Hand-authored replacements (true writing order preserved)
-S.strokes[0] = rebuild(S.strokes[0], elegantH())
-S.strokes[7] = rebuild(S.strokes[7], elegantY(S.strokes[7].start, S.strokes[7].end))
-S.strokes[8] = rebuild(S.strokes[8], elegantB(S.strokes[8].start, S.strokes[8].end))
-S.strokes[11] = rebuild(S.strokes[11], elegantD(S.strokes[11].start, S.strokes[11].end))
-S.strokes[16] = rebuild(S.strokes[16], elegantY(S.strokes[16].start, S.strokes[16].end))
-
-let minX = Infinity
-let minY = Infinity
-let maxX = -Infinity
-let maxY = -Infinity
-for (const s of S.strokes) {
-  for (const [x, y] of parsePath(s.center)) {
-    minX = Math.min(minX, x)
-    minY = Math.min(minY, y)
-    maxX = Math.max(maxX, x)
-    maxY = Math.max(maxY, y)
-  }
-}
-S.bbox = [minX - 10, minY - 12, maxX - minX + 20, maxY - minY + 24]
+S.bbox = [-8, -8, 655.9, 144.03]
 
 fs.writeFileSync(strokesPath, `const STROKES = ${JSON.stringify(S)};\nexport default STROKES;\n`)
-console.log('hand calligraphy written', {
+console.log('hand calligraphy written (OCR-tuned H/B)', {
   H: S.strokes[0].len,
-  yHappy: S.strokes[7].len,
   B: S.strokes[8].len,
-  d: S.strokes[11].len,
-  yBirth: S.strokes[16].len,
-  bbox: S.bbox,
 })

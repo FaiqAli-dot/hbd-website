@@ -125,6 +125,11 @@ export class GalleryWorld {
   private pullOutActive = false
   private pullOutDone = false
   private dustMats: THREE.ShaderMaterial[] = []
+  /** Direct finger scrub — path progress tracks pointer 1:1 (no anticipation ease) */
+  private scrubbing = false
+  private scrubPathIdx = -1
+  private scrubTween: gsap.core.Tween | null = null
+  private useLinearPath = false
 
   constructor() {
     const BG = new THREE.Color('#0b080c')
@@ -477,7 +482,7 @@ export class GalleryWorld {
 
   tryGesture(direction: GestureDirection, _camera?: THREE.PerspectiveCamera): boolean {
     void _camera
-    if (this.moving || this.pullOutActive) return false
+    if (this.moving || this.pullOutActive || this.scrubbing) return false
     if (this.complete) return false
 
     const nextIdx = this.history.length
@@ -488,16 +493,130 @@ export class GalleryWorld {
     // Path index: intro→g1 is paths[0], g1→g2 is paths[1], ...
     const pathIdx = nextIdx
     return this.animatePath(pathIdx, () => {
-      this.history.push(nextIdx)
-      this.index = nextIdx + 1
-      this.photos[nextIdx].revealed = true
-      this.progressCb?.()
-      if (this.history.length >= galleryPhotos.length) {
-        this.complete = true
-        sound.play('transition', 0.35)
-        this.completeCb?.()
-      }
+      this.commitArrival(nextIdx)
     })
+  }
+
+  private commitArrival(nextIdx: number): void {
+    this.history.push(nextIdx)
+    this.index = nextIdx + 1
+    this.photos[nextIdx].revealed = true
+    this.progressCb?.()
+    if (this.history.length >= galleryPhotos.length) {
+      this.complete = true
+      sound.play('transition', 0.35)
+      this.completeCb?.()
+    }
+  }
+
+  /**
+   * Begin a finger/mouse scrub along the next ribbon path.
+   * Returns the expected direction (or null if locked/complete).
+   */
+  beginScrub(): { expected: GestureDirection | 'scroll-up'; pathIdx: number } | null {
+    if (this.moving || this.pullOutActive || this.complete || this.scrubbing) return null
+    this.scrubTween?.kill()
+    this.scrubTween = null
+    const expected = this.expectedGesture()
+    if (expected === 'scroll-up') return null
+    const pathIdx = this.history.length
+    if (!this.paths[pathIdx]) return null
+    this.scrubbing = true
+    this.useLinearPath = true
+    this.scrubPathIdx = pathIdx
+    this.moving = true
+    this.state = { k: pathIdx, t: 0 }
+    this.captionCb?.(null)
+    return { expected, pathIdx }
+  }
+
+  /** Map 0..1 finger progress onto the active scrub path (1:1). */
+  scrubTo(progress: number): void {
+    if (!this.scrubbing) return
+    this.state.t = THREE.MathUtils.clamp(progress, 0, 1)
+  }
+
+  getScrubProgress(): number {
+    return this.scrubbing || this.useLinearPath ? this.state.t : memoryGlideEase(this.state.t)
+  }
+
+  /** Debug/test snapshot of ribbon scrub state */
+  getDragState(): {
+    scrubbing: boolean
+    progress: number
+    pathIdx: number
+    moving: boolean
+    expected: GestureDirection | 'scroll-up'
+  } {
+    return {
+      scrubbing: this.scrubbing,
+      progress: this.state.t,
+      pathIdx: this.state.k,
+      moving: this.moving,
+      expected: this.expectedGesture(),
+    }
+  }
+
+  /**
+   * End scrub: commit forward or spring back from current progress/velocity.
+   * GSAP continues from the live `t` — no jump.
+   */
+  endScrub(opts: { commit: boolean; velocity?: number }): void {
+    if (!this.scrubbing) return
+    this.scrubbing = false
+    const pathIdx = this.scrubPathIdx
+    const path = this.paths[pathIdx]
+    const nextIdx = pathIdx
+    const from = this.state.t
+    const to = opts.commit ? 1 : 0
+    const remaining = Math.abs(to - from)
+    if (remaining < 0.001) {
+      this.state.t = to
+      this.moving = false
+      this.useLinearPath = false
+      this.scrubPathIdx = -1
+      if (opts.commit && path?.toPhoto >= 0) {
+        this.captionCb?.(galleryPhotos[path.toPhoto]?.caption ?? null)
+        this.commitArrival(nextIdx)
+      }
+      return
+    }
+    // Inherit finger momentum: faster flicks finish quicker
+    const speed = Math.min(2.4, Math.max(0.35, Math.abs(opts.velocity ?? 0) / 900))
+    const duration = Math.max(0.28, Math.min(1.35, (remaining * (path?.duration ?? 2.4)) / (0.85 + speed)))
+    const proxy = { t: from }
+    this.scrubTween?.kill()
+    this.scrubTween = gsap.to(proxy, {
+      t: to,
+      duration,
+      // Tail of memoryGlide (no anticipation pull-back) — smooth handoff from finger
+      ease: opts.commit ? 'power2.out' : 'power3.out',
+      onUpdate: () => {
+        this.state.t = proxy.t
+      },
+      onComplete: () => {
+        this.state.t = to
+        this.moving = false
+        this.useLinearPath = false
+        this.scrubPathIdx = -1
+        this.scrubTween = null
+        if (opts.commit) {
+          if (path?.toPhoto >= 0) {
+            this.captionCb?.(galleryPhotos[path.toPhoto]?.caption ?? null)
+          }
+          this.commitArrival(nextIdx)
+        } else {
+          // Restored to previous station
+          if (nextIdx === 0) this.state = { k: 0, t: 0 }
+          else this.state = { k: nextIdx - 1, t: 1 }
+        }
+      },
+    })
+  }
+
+  cancelScrub(): void {
+    if (!this.scrubbing) return
+    this.endScrub({ commit: false, velocity: 0 })
   }
 
   /** Dolly-zoom pull-out after 08/08 — pull back, then settle into a large collage */
@@ -525,13 +644,14 @@ export class GalleryWorld {
     })
   }
 
-  /** Near-field framing used after pull-out unlock */
+  /** Near-field framing used after pull-out unlock — ~55–65% fill with plum margins */
   getCollageCamera(): { x: number; y: number; z: number; lookY: number; fov: number } {
     if (this.aspect < 0.85) {
-      // Portrait: pull back a touch so the 4×2 stack stays inside the frame
-      return { x: 0.0, y: 0.05, z: 7.2, lookY: 0.0, fov: 32 }
+      // Portrait: ~55% fill, grid raised so CONTINUE sits in clear plum under it
+      return { x: 0.0, y: 1.35, z: 19.8, lookY: 1.15, fov: 21 }
     }
-    return { x: 0.05, y: 0.12, z: 5.6, lookY: 0.02, fov: 28 }
+    // Landscape: ~55–60% fill with plum margins clear of chrome
+    return { x: 0.0, y: 0.02, z: 13.4, lookY: 0.0, fov: 22 }
   }
 
   undo(_camera?: unknown): boolean {
@@ -576,6 +696,7 @@ export class GalleryWorld {
     const path = this.paths[pathIdx]
     if (!path) return false
     this.moving = true
+    this.useLinearPath = false // keyboard/wheel keep memoryGlide anticipation
     this.state = { k: pathIdx, t: 0 }
     this.captionCb?.(null)
     sound.play('reveal', 0.35)
@@ -593,7 +714,7 @@ export class GalleryWorld {
     }
 
     const proxy = { t: 0 }
-    // Linear wall-clock progress — easing is applied once in applyCamera
+    // Linear clock; memoryGlideEase applied in applyCamera (anticipation for keys/wheel)
     gsap.to(proxy, {
       t: 1,
       duration: path.duration,
@@ -623,13 +744,16 @@ export class GalleryWorld {
     if (!P) return this.fov
 
     const t = this.state.t
-    const e = memoryGlideEase(t)
+    // Finger scrub / drag settle: 1:1 path progress. Keyboard/wheel: memoryGlide.
+    const e = this.useLinearPath ? t : memoryGlideEase(t)
     const pos = P.curve.getPoint(THREE.MathUtils.clamp(e, 0, 1))
-    const eo = this.oriEase(Math.min(1, t * 1.12))
+    const eo = this.oriEase(Math.min(1, (this.useLinearPath ? t : t) * 1.12))
     this.tmpQ.copy(P.q0).slerp(P.q1, eo)
 
     // Banking up to ~3.5°
-    const e2 = memoryGlideEase(Math.min(1, t + 0.01))
+    const e2 = this.useLinearPath
+      ? Math.min(1, t + 0.01)
+      : memoryGlideEase(Math.min(1, t + 0.01))
     const vel = P.curve.getPoint(e2).sub(pos)
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.tmpQ)
     const lateral = vel.dot(right) * 60
@@ -650,11 +774,12 @@ export class GalleryWorld {
     const outro = pathIdx === this.paths.length - 1
     // Outro settle uses eased path progress (single ease from linear gsap clock)
     const fz = outro ? (this.pullOutDone ? 1 : e) : 0
-    // 44 → ~16 mid → settle 28° (wider FOV = larger on-screen collage)
+    // 44 → ~16 mid → settle collage FOV (narrower = more plum margin)
+    const settleFov = this.getCollageCamera().fov
     const fov =
       44 +
       (16 - 44) * Math.min(1, fz * 1.15) +
-      (28 - 16) * Math.max(0, (fz - 0.58) / 0.42)
+      (settleFov - 16) * Math.max(0, (fz - 0.58) / 0.42)
     if (Math.abs(camera.fov - fov) > 1e-4) {
       camera.fov = fov
       camera.updateProjectionMatrix()
@@ -687,36 +812,35 @@ export class GalleryWorld {
     return fov
   }
 
-  /** Deliberate near-field collage — large, legible, rectangular, composed */
+  /** Deliberate near-field collage — ~60% fill, plum margins, clear of UI */
   private composeCollageSettle(t: number): void {
     const k = THREE.MathUtils.clamp(t, 0, 1)
     const ease = gsap.parseEase('power2.out')(k)
-    // Landscape: 2×4. Portrait: 4×2 so all eight stay inside the frame.
+    // Landscape: compact 2×4. Portrait: compact 4×2. Kept inside safe inset.
     const portrait = this.aspect < 0.85
     const targets = portrait
       ? [
-          { x: -1.05, y: 2.55, z: -0.55 },
-          { x: 1.05, y: 2.45, z: -0.85 },
-          { x: -1.1, y: 0.85, z: -0.7 },
-          { x: 1.1, y: 0.75, z: -1.05 },
-          { x: -1.05, y: -0.85, z: -1.2 },
-          { x: 1.05, y: -0.95, z: -0.95 },
-          { x: -1.1, y: -2.55, z: -1.35 },
-          { x: 1.1, y: -2.45, z: -1.15 },
+          { x: -0.72, y: 1.55, z: -0.7 },
+          { x: 0.72, y: 1.45, z: -0.95 },
+          { x: -0.76, y: 0.4, z: -0.8 },
+          { x: 0.76, y: 0.32, z: -1.1 },
+          { x: -0.72, y: -0.65, z: -1.2 },
+          { x: 0.72, y: -0.72, z: -1.0 },
+          { x: -0.76, y: -1.65, z: -1.35 },
+          { x: 0.76, y: -1.55, z: -1.15 },
         ]
       : [
-          { x: -2.15, y: 1.2, z: -0.55 },
-          { x: -0.72, y: 1.28, z: -0.95 },
-          { x: 0.72, y: 1.15, z: -0.7 },
-          { x: 2.15, y: 1.05, z: -1.15 },
-          { x: -2.2, y: -1.05, z: -1.35 },
-          { x: -0.72, y: -1.18, z: -1.0 },
-          { x: 0.72, y: -1.1, z: -1.45 },
-          { x: 2.2, y: -0.98, z: -1.2 },
+          { x: -1.28, y: 0.78, z: -0.7 },
+          { x: -0.42, y: 0.84, z: -1.0 },
+          { x: 0.42, y: 0.74, z: -0.8 },
+          { x: 1.28, y: 0.68, z: -1.15 },
+          { x: -1.3, y: -0.72, z: -1.3 },
+          { x: -0.42, y: -0.8, z: -1.05 },
+          { x: 0.42, y: -0.74, z: -1.4 },
+          { x: 1.3, y: -0.66, z: -1.2 },
         ]
-    const rolls = [0.035, -0.03, 0.02, -0.04, 0.03, -0.025, 0.015, -0.02]
-    // Portrait needs a slightly closer camera plane; scale prints a touch smaller
-    const scale = portrait ? 0.82 : 1
+    const rolls = [0.022, -0.018, 0.012, -0.024, 0.018, -0.016, 0.01, -0.014]
+    const scale = portrait ? 0.28 : 0.46
     this.photos.forEach((pm, i) => {
       const dest = targets[i]
       const ox = pm.layout.pos[0]
@@ -755,12 +879,13 @@ export class GalleryWorld {
       this.threadMat.uniforms.uLit.value = u
     }
 
+    // During finger scrub, light-wash tracks path progress 1:1
+    const revealT = this.useLinearPath ? t : gsap.utils.clamp(0, 1, (t - 0.28) / 0.55)
     this.photos.forEach((pm, i) => {
       let r = 0
       if (k === this.paths.length - 1) r = 1
       else if (i < k) r = 1
-      // Light the approaching print earlier so mid-flight reads as framed travel
-      else if (i === k) r = gsap.utils.clamp(0, 1, (t - 0.28) / 0.55)
+      else if (i === k) r = this.useLinearPath ? t : revealT
       else if (pm.revealed) r = 1
       pm.material.uniforms.uReveal.value = r
       pm.material.uniforms.uFocus.value = i === k && k < 8 ? r : 0
