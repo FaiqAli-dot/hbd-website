@@ -33,6 +33,7 @@ body:not(.gallery-complete) {
   overflow: hidden;
   height: 100%;
   overscroll-behavior: none;
+  touch-action: none;
 }
 
 html.gallery-complete,
@@ -40,6 +41,10 @@ body.gallery-complete {
   overflow-x: hidden;
   overflow-y: auto;
   height: auto;
+  min-height: 100%;
+  touch-action: pan-y;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 #app {
@@ -54,7 +59,12 @@ body.gallery-complete {
   height: 100%;
   display: block;
   z-index: 0;
+  /* During gallery: capture swipes. After unlock, allow vertical page scroll on iOS. */
   touch-action: none;
+}
+
+html.gallery-complete .webgl-canvas {
+  touch-action: pan-y;
 }
 
 .skip-link {
@@ -159,6 +169,30 @@ body.gallery-complete {
   text-align: center;
   color: var(--ink-muted);
   pointer-events: none;
+  appearance: none;
+  background: none;
+  border: none;
+  font: inherit;
+  padding: 0.75rem;
+  margin: 0;
+  cursor: default;
+}
+
+.gallery-hud__guide.is-tappable {
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 1rem;
+}
+
+.gallery-hud__continue {
+  margin-top: 0.15rem;
+  font-family: var(--font-display);
+  font-size: 0.68rem;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink);
+  border-bottom: 1px solid rgba(212, 180, 131, 0.55);
+  padding-bottom: 0.15rem;
 }
 
 .hand {
@@ -263,6 +297,28 @@ body.gallery-complete {
 .finale-overlay.is-active {
   opacity: 1;
   transform: none;
+}
+
+.letter-reveal {
+  opacity: 0;
+  transform: translateY(18px);
+}
+
+.letter-reveal.is-shown {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 0.8s var(--ease-out),
+    transform 0.8s var(--ease-out);
+}
+
+.gallery-hud .hand {
+  /* HUD hand is secondary; the in-scene Hand3D is primary */
+  opacity: 0.35;
+}
+
+html.gallery-complete .gallery-hud .hand {
+  opacity: 0.55;
 }
 
 .letter-overlay {
@@ -408,8 +464,12 @@ body.gallery-complete {
   .gallery-hud__guide {
     right: 50%;
     top: auto;
-    bottom: 18vh;
+    bottom: 16vh;
     translate: 50% 0;
+  }
+
+  .gallery-hud.is-complete .gallery-hud__guide {
+    bottom: 20vh;
   }
 
   .hand {
