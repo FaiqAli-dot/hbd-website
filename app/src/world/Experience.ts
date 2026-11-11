@@ -57,6 +57,10 @@ export class Experience {
   /** After pull-out, camera rides this base through letter → memories → finale */
   private cameraBase = { x: 0.6, y: 1.4, z: 40, lookY: 0.2 }
   private awaitingPullOut = false
+  /** Quiet hints: hide after first success; reappear only after ~4s idle */
+  private hintIdleTimer: ReturnType<typeof setTimeout> | null = null
+  private hintsSoftened = false
+  private gestureSuccesses = 0
 
   constructor(app: HTMLElement) {
     this.app = app
@@ -135,16 +139,23 @@ export class Experience {
     this.gallery.onProgress(() => {
       const p = this.gallery.getProgress()
       this.ui.setProgress(p.seen, p.total)
+      this.noteGalleryInteraction()
       this.promptGesture()
     })
 
     this.gallery.onComplete(() => {
       this.awaitingPullOut = true
       this.ui.setGalleryComplete(true)
+      this.clearHintIdle()
+      this.hintsSoftened = false
+      this.ui.setHintsSoftened(false)
+      this.hand.fadeIn()
+      this.hand3d.setVisible(true)
       this.hand.demonstrate('scroll-up')
       this.hand3d.demonstrate('scroll-up')
       this.ui.setHint(galleryCopy.scrollHint, '')
       this.ui.setCaption(null)
+      this.scheduleHintIdle()
     })
 
     this.ui.onContinue(() => {
@@ -154,6 +165,7 @@ export class Experience {
 
     this.bindInput()
     this.bindScrollCamera()
+    this.bindLetterScrollAssist()
     this.bindGyro()
     this.onResize()
     window.addEventListener('resize', this.onResize)
@@ -207,15 +219,22 @@ export class Experience {
     document.body.style.overflowY = 'auto'
     document.body.style.height = 'auto'
     document.body.style.touchAction = 'pan-y'
-
+    // Critical for iOS: #app had touch-action:none during gallery — restore pan-y
+    this.app.style.touchAction = 'pan-y'
+    this.app.style.overflow = 'visible'
     this.canvas.style.touchAction = 'pan-y'
+    // Let vertical pans fall through to document scroll (memories use window pointers)
+    this.canvas.style.pointerEvents = 'none'
     this.detachScrollLock?.()
     this.detachScrollLock = null
 
     this.ui.setGalleryComplete(true)
-    this.hand.demonstrate('scroll-up')
-    this.hand3d.demonstrate('scroll-up')
+    this.clearHintIdle()
+    this.hand.fadeOut()
+    this.hand3d.setVisible(false)
     this.ui.setHint(galleryCopy.scrollHint, '')
+    this.ui.setHintsSoftened(true)
+    this.scheduleHintIdle()
 
     // Seed scroll camera at the near-field collage framing and hold FOV
     const collage = this.gallery.getCollageCamera()
@@ -253,7 +272,14 @@ export class Experience {
     document.body.style.overflowY = ''
     document.body.style.height = ''
     document.body.style.touchAction = ''
+    this.app.style.touchAction = 'none'
     this.canvas.style.touchAction = 'none'
+    this.canvas.style.pointerEvents = ''
+    this.gestureSuccesses = 0
+    this.hintsSoftened = false
+    this.clearHintIdle()
+    this.ui.setHintsSoftened(false)
+    this.hand.fadeIn()
     this.ui.setGalleryComplete(false)
     this.ui.setChapter('gallery')
     this.ui.setCaption(null)
@@ -263,21 +289,58 @@ export class Experience {
 
   private promptGesture(): void {
     const g = this.gallery.expectedGesture()
+    const arrow: Record<GestureDirection | 'scroll-up', string> = {
+      left: 'swipe ←',
+      right: 'swipe →',
+      up: 'swipe ↑',
+      down: 'swipe ↓',
+      'scroll-up': galleryCopy.scrollHint,
+    }
+    const label = arrow[g === 'scroll-up' ? 'scroll-up' : g]
+    this.ui.setHint(label, '')
+    if (this.hintsSoftened) {
+      // Keep copy updated but don't restart the looping hand until idle re-show
+      return
+    }
     if (g === 'scroll-up') {
       this.hand.demonstrate('scroll-up')
       this.hand3d.demonstrate('scroll-up')
-      this.ui.setHint(galleryCopy.scrollHint, '')
       return
-    }
-    const labels: Record<GestureDirection, string> = {
-      left: 'Swipe left',
-      right: 'Swipe right',
-      up: 'Swipe up',
-      down: 'Swipe down',
     }
     this.hand.demonstrate(g)
     this.hand3d.demonstrate(g)
-    this.ui.setHint(galleryCopy.introHint, labels[g])
+  }
+
+  private noteGalleryInteraction(): void {
+    this.gestureSuccesses += 1
+    this.clearHintIdle()
+    if (this.gestureSuccesses >= 1 && !this.hintsSoftened) {
+      this.hintsSoftened = true
+      this.ui.setHintsSoftened(true)
+      this.hand.fadeOut()
+      this.hand3d.setVisible(false)
+    }
+    this.scheduleHintIdle()
+  }
+
+  private scheduleHintIdle(): void {
+    this.clearHintIdle()
+    if (this.unlocked && this.chapter !== 'gallery') return
+    this.hintIdleTimer = setTimeout(() => {
+      if (this.unlocked && this.chapter !== 'gallery') return
+      this.hintsSoftened = false
+      this.ui.setHintsSoftened(false)
+      this.hand.fadeIn()
+      this.hand3d.setVisible(true)
+      this.promptGesture()
+    }, 4000)
+  }
+
+  private clearHintIdle(): void {
+    if (this.hintIdleTimer != null) {
+      clearTimeout(this.hintIdleTimer)
+      this.hintIdleTimer = null
+    }
   }
 
   private requestGyroPermission(): void {
@@ -560,14 +623,76 @@ export class Experience {
     })
   }
 
+  /**
+   * Letter overlay can be taller than the iPhone viewport. Keep it scrollable,
+   * and when the user keeps swiping/wheeling past its edges, drive document scroll
+   * so chapter 3 remains reachable.
+   */
+  private bindLetterScrollAssist(): void {
+    const letter = document.querySelector('[data-letter-overlay]') as HTMLElement | null
+    if (!letter) return
+
+    const edgeEps = 3
+    const atBottom = () => letter.scrollTop + letter.clientHeight >= letter.scrollHeight - edgeEps
+    const atTop = () => letter.scrollTop <= edgeEps
+
+    const onWheel = (e: WheelEvent) => {
+      if (!this.unlocked || this.chapter !== 'letter') return
+      if (e.deltaY > 0 && atBottom()) {
+        window.scrollBy({ top: e.deltaY, left: 0, behavior: 'auto' })
+      } else if (e.deltaY < 0 && atTop()) {
+        window.scrollBy({ top: e.deltaY, left: 0, behavior: 'auto' })
+      }
+    }
+
+    let touchY = 0
+    let touching = false
+    const onTouchStart = (e: TouchEvent) => {
+      if (!this.unlocked || this.chapter !== 'letter' || e.touches.length !== 1) return
+      touching = true
+      touchY = e.touches[0].clientY
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (!touching || !this.unlocked || this.chapter !== 'letter') return
+      const y = e.touches[0]?.clientY ?? touchY
+      const dy = touchY - y
+      touchY = y
+      // Finger up (dy>0) at bottom → advance page; finger down at top → go back
+      if (dy > 0 && atBottom()) {
+        window.scrollBy({ top: dy, left: 0, behavior: 'auto' })
+      } else if (dy < 0 && atTop()) {
+        window.scrollBy({ top: dy, left: 0, behavior: 'auto' })
+      }
+    }
+    const onTouchEnd = () => {
+      touching = false
+    }
+
+    letter.addEventListener('wheel', onWheel, { passive: true })
+    letter.addEventListener('touchstart', onTouchStart, { passive: true })
+    letter.addEventListener('touchmove', onTouchMove, { passive: true })
+    letter.addEventListener('touchend', onTouchEnd, { passive: true })
+    this.extraCleanup.push(
+      () => letter.removeEventListener('wheel', onWheel),
+      () => letter.removeEventListener('touchstart', onTouchStart),
+      () => letter.removeEventListener('touchmove', onTouchMove),
+      () => letter.removeEventListener('touchend', onTouchEnd),
+      () => this.clearHintIdle(),
+    )
+  }
+
   private setChapter(chapter: typeof this.chapter): void {
     if (this.chapter === chapter) return
     this.chapter = chapter
     this.atmosphere.setPalette(chapter)
     this.ui.setChapter(chapter)
 
-    if (chapter !== 'gallery') this.hand3d.setVisible(false)
-    else this.hand3d.setVisible(true)
+    if (chapter !== 'gallery') {
+      this.hand3d.setVisible(false)
+      this.clearHintIdle()
+    } else if (!this.hintsSoftened) {
+      this.hand3d.setVisible(true)
+    }
 
     // Clamp bloom hard on the handwritten finale — no blown-out white disc
     this.post.setBloomMul(chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : 0.9)

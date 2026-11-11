@@ -39,11 +39,11 @@ export class Hand3D {
     thumb.rotation.y = 0.35
     this.group.add(thumb)
 
-    // Camera-local placement: hand rides with the lens so it stays tasteful
-    // in frame while the ribbon camera travels. No glow disc — it read as a
-    // stray gold ring in the pull-out collage.
-    this.group.position.set(0.55, -0.42, -1.55)
-    this.group.scale.setScalar(0.28)
+    // Camera-local placement: small, quiet guide that rides with the lens.
+    this.group.position.set(0.42, -0.5, -1.55)
+    this.group.scale.setScalar(0.13)
+    this.mat.opacity = 0.45
+    this.mat.transparent = true
   }
 
   /** Attach to the active camera so the guide stays in view during travel */
@@ -63,8 +63,8 @@ export class Hand3D {
     }
     const pose = map[direction]
     const base = {
-      x: 0.55,
-      y: direction === 'scroll-up' ? -0.28 : -0.42,
+      x: 0.42,
+      y: direction === 'scroll-up' ? -0.38 : -0.5,
       z: -1.55,
     }
 

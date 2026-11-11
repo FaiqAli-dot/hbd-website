@@ -23,28 +23,42 @@ export function createHandMarkup(): string {
 }
 
 export class HandGuide {
+  private root: HTMLElement
   private group: HTMLElement
   private arrow: HTMLElement
   private tween: gsap.core.Timeline | null = null
 
   constructor(root: HTMLElement) {
+    this.root = root
     this.group = root.querySelector('.hand__group') as HTMLElement
     this.arrow = root.querySelector('[data-arrow]') as HTMLElement
   }
 
+  fadeOut(): void {
+    this.tween?.kill()
+    this.tween = null
+    gsap.to(this.root, { opacity: 0, duration: 0.55, ease: 'power2.out', overwrite: true })
+  }
+
+  fadeIn(): void {
+    gsap.to(this.root, { opacity: 0.42, duration: 0.65, ease: 'power2.out', overwrite: true })
+  }
+
   demonstrate(direction: GestureDirection | 'scroll-up'): void {
     this.tween?.kill()
+    gsap.set(this.root, { opacity: 0.42 })
     if (prefersReducedMotion()) {
       this.setStaticPose(direction)
       return
     }
 
-    const tl = gsap.timeline({ repeat: -1, repeatDelay: 0.55 })
+    // Brief looping demo — quiet travel distance
+    const tl = gsap.timeline({ repeat: -1, repeatDelay: 1.1 })
     this.tween = tl
     gsap.set(this.group, { x: 0, y: 0, rotate: 0, transformOrigin: '50% 60%' })
     gsap.set(this.arrow, { opacity: 0, clearProps: 'transform' })
 
-    const travel = 42
+    const travel = 22
     const map: Record<string, { x: number; y: number; label: string }> = {
       left: { x: -travel, y: 0, label: '←' },
       right: { x: travel, y: 0, label: '→' },
@@ -58,13 +72,13 @@ export class HandGuide {
     tl.to(this.group, {
       x: pose.x,
       y: pose.y,
-      duration: 0.85,
+      duration: 0.9,
       ease: 'power2.inOut',
     })
       .to(
         this.arrow,
         {
-          opacity: 0.85,
+          opacity: 0.55,
           x: pose.x * 0.35,
           y: pose.y * 0.35,
           duration: 0.45,

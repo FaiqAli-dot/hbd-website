@@ -13,6 +13,7 @@ export interface OverlayApi {
   setHint: (text: string, gestureLabel: string) => void
   setCaption: (text: string | null) => void
   setGalleryComplete: (complete: boolean) => void
+  setHintsSoftened: (soft: boolean) => void
   setChapter: (chapter: 'gallery' | 'letter' | 'memories' | 'finale') => void
   setMemoryLabel: (label: string | null) => void
   onUndo: (cb: () => void) => void
@@ -37,7 +38,7 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
       <button type="button" class="gallery-hud__guide" data-continue data-no-gesture aria-label="${galleryCopy.scrollHint}">
         ${createHandMarkup()}
         <p class="gallery-hud__hint" data-hint>${galleryCopy.introHint}</p>
-        <p class="gallery-hud__gesture" data-gesture-label></p>
+        <p class="gallery-hud__gesture" data-gesture-label hidden></p>
         <span class="gallery-hud__continue" data-continue-label hidden>${galleryCopy.continueLabel}</span>
       </button>
       <p class="gallery-hud__caption" data-caption aria-live="polite"></p>
@@ -158,9 +159,11 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
       progressTotal.textContent = String(total).padStart(2, '0')
       undoBtn.disabled = seen === 0
     },
-    setHint: (text, gesture) => {
+    setHint: (text, _gesture) => {
       hint.textContent = text
-      gestureLabel.textContent = gesture
+      // Keep the loud secondary gesture line empty — one quiet hint only
+      gestureLabel.textContent = ''
+      void _gesture
     },
     setCaption: (text) => {
       if (!text) {
@@ -170,6 +173,9 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
       }
       captionEl.textContent = text
       captionEl.classList.add('is-shown')
+    },
+    setHintsSoftened: (soft) => {
+      galleryHud.classList.toggle('is-hints-soft', soft)
     },
     setGalleryComplete: (complete) => {
       galleryHud.classList.toggle('is-complete', complete)
