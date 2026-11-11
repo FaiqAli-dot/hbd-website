@@ -54,9 +54,9 @@ export class Experience {
   private lastScrollProgress = 0
   private adaptiveDpr: AdaptiveDpr
   private lastFrameMs = 16.7
-  private cameraBase = { x: 0, y: 0.15, z: 5.2, lookY: 0 }
-  /** GSAP-owned reveal offset — parallax is layered on top every frame */
-  private revealCam = { x: 0, y: 0, z: 0 }
+  /** After pull-out, camera rides this base through letter → memories → finale */
+  private cameraBase = { x: 0.6, y: 1.4, z: 40, lookY: 0.2 }
+  private awaitingPullOut = false
 
   constructor(app: HTMLElement) {
     this.app = app
@@ -72,25 +72,25 @@ export class Experience {
       alpha: false,
       powerPreference: 'high-performance',
     })
-    this.renderer.setClearColor('#07060a')
+    this.renderer.setClearColor('#0b080c')
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.02
+    this.renderer.toneMappingExposure = 1.0
 
     this.adaptiveDpr = new AdaptiveDpr(maxPixelRatio(this.tier), this.tier === 'low' ? 0.7 : 0.85)
 
-    this.camera = new THREE.PerspectiveCamera(44, 1, 0.08, 140)
-    this.camera.position.set(0, 0.15, 5.2)
+    this.camera = new THREE.PerspectiveCamera(44, 1, 0.15, 220)
+    this.camera.position.set(0, 0.35, 11.5)
 
     this.atmosphere = new Atmosphere(this.tier)
     this.scene.add(this.atmosphere.background)
     this.scene.add(this.atmosphere.group)
 
-    const key = new THREE.DirectionalLight('#ffd7b0', 1.35)
+    const key = new THREE.DirectionalLight('#ffd7b0', 0.55)
     key.position.set(3, 5, 4)
-    const rim = new THREE.DirectionalLight('#8aa0c8', 0.32)
+    const rim = new THREE.DirectionalLight('#8aa0c8', 0.18)
     rim.position.set(-4, 1, -2)
-    const amb = new THREE.AmbientLight('#1c1820', 0.55)
+    const amb = new THREE.AmbientLight('#1c1820', 0.35)
     this.scene.add(key, rim, amb)
 
     this.gallery = new GalleryWorld()
@@ -103,8 +103,9 @@ export class Experience {
       this.letter.group,
       this.memories.group,
       this.finale.group,
-      this.hand3d.group,
     )
+    // Hand rides with the camera so the guide stays framed during ribbon travel
+    this.hand3d.attachToCamera(this.camera)
 
     this.post = new PostFX(this.renderer, this.scene, this.camera, this.tier)
 
@@ -113,12 +114,16 @@ export class Experience {
     this.ui.setProgress(0, galleryPhotos.length)
     this.promptGesture()
 
+    this.gallery.onCaption((text) => this.ui.setCaption(text))
+
     this.ui.onUndo(() => {
-      if (this.gallery.undo(this.revealCam)) {
+      if (this.awaitingPullOut || this.gallery.hasStartedPullOut()) return
+      if (this.gallery.undo()) {
         const p = this.gallery.getProgress()
         this.ui.setProgress(p.seen, p.total)
         if (this.unlocked) this.relockGallery()
         else this.ui.setGalleryComplete(false)
+        this.awaitingPullOut = false
         this.promptGesture()
       }
     })
@@ -130,13 +135,17 @@ export class Experience {
     })
 
     this.gallery.onComplete(() => {
-      this.unlockJourney()
+      this.awaitingPullOut = true
+      this.ui.setGalleryComplete(true)
+      this.hand.demonstrate('scroll-up')
+      this.hand3d.demonstrate('scroll-up')
+      this.ui.setHint(galleryCopy.scrollHint, '')
+      this.ui.setCaption(null)
     })
 
     this.ui.onContinue(() => {
       this.requestGyroPermission()
-      if (!this.unlocked) this.unlockJourney()
-      this.scrollIntoJourney()
+      this.beginPullOutAndUnlock()
     })
 
     this.bindInput()
@@ -149,12 +158,41 @@ export class Experience {
     this.tick()
   }
 
+  private beginPullOutAndUnlock(): void {
+    if (this.unlocked) {
+      this.scrollIntoJourney()
+      return
+    }
+    if (!this.awaitingPullOut && !this.gallery.getProgress().complete) {
+      // Allow Continue only after 08/08
+      return
+    }
+    if (this.gallery.isPullOutDone()) {
+      this.unlockJourney()
+      this.scrollIntoJourney()
+      return
+    }
+    if (this.gallery.hasStartedPullOut()) return
+
+    const ok = this.gallery.pullOut(() => {
+      this.unlockJourney()
+      // Hold the lit collage briefly so the dolly-zoom read lands, then ease into Ch2
+      window.setTimeout(() => this.scrollIntoJourney(), prefersReducedMotion() ? 0 : 1600)
+    })
+    if (!ok && this.gallery.getProgress().complete) {
+      // Reduced-motion / already settled fallback
+      this.unlockJourney()
+      this.scrollIntoJourney()
+    }
+  }
+
   private unlockJourney(): void {
     if (this.unlocked) {
       this.ui.setGalleryComplete(true)
       return
     }
     this.unlocked = true
+    this.awaitingPullOut = false
 
     document.documentElement.classList.add('gallery-complete')
     document.body.classList.add('gallery-complete')
@@ -174,6 +212,9 @@ export class Experience {
     this.hand3d.demonstrate('scroll-up')
     this.ui.setHint(galleryCopy.scrollHint, '')
 
+    // Seed scroll camera at the pull-out collage
+    this.cameraBase = { x: 0.6, y: 1.4, z: 40, lookY: 0.2 }
+
     void document.body.offsetHeight
     requestAnimationFrame(() => {
       ScrollTrigger.refresh()
@@ -192,6 +233,7 @@ export class Experience {
 
   private relockGallery(): void {
     this.unlocked = false
+    this.awaitingPullOut = false
     this.chapter = 'gallery'
     window.scrollTo({ top: 0, behavior: 'auto' })
     document.documentElement.classList.remove('gallery-complete')
@@ -205,6 +247,7 @@ export class Experience {
     this.canvas.style.touchAction = 'none'
     this.ui.setGalleryComplete(false)
     this.ui.setChapter('gallery')
+    this.ui.setCaption(null)
     if (!this.detachScrollLock) this.attachScrollLock()
     ScrollTrigger.refresh()
   }
@@ -240,14 +283,12 @@ export class Experience {
   private bindGyro(): void {
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.beta == null || e.gamma == null) return
-      // Normalize roughly to -1..1
       this.gyro.x = THREE.MathUtils.clamp(e.gamma / 45, -1, 1)
       this.gyro.y = THREE.MathUtils.clamp((e.beta - 45) / 45, -1, 1)
     }
     window.addEventListener('deviceorientation', onOrient)
     this.extraCleanup.push(() => window.removeEventListener('deviceorientation', onOrient))
 
-    // Also try on first pointer down after unlock (iOS gesture requirement)
     const onFirst = () => {
       if (!this.unlocked) return
       this.requestGyroPermission()
@@ -263,7 +304,13 @@ export class Experience {
       enabled: () => !this.unlocked && this.chapter === 'gallery',
       onGesture: (dir) => {
         if (this.unlocked) return
-        const ok = this.gallery.tryGesture(dir, this.revealCam)
+        // After 08/08, swipe-up triggers the dolly-zoom pull-out
+        if (this.awaitingPullOut && dir === 'up') {
+          this.beginPullOutAndUnlock()
+          return
+        }
+        if (this.awaitingPullOut) return
+        const ok = this.gallery.tryGesture(dir)
         if (!ok) this.gallery.shakeHint(this.gallery.group)
       },
     })
@@ -271,17 +318,21 @@ export class Experience {
     let swipeStartY = 0
     let swipeTracking = false
     const onUnlockSwipeStart = (e: TouchEvent) => {
-      if (!this.unlocked || this.chapter !== 'gallery') return
+      if (!this.awaitingPullOut && !this.unlocked) return
+      if (this.chapter !== 'gallery' && !this.awaitingPullOut) return
       if (e.touches.length !== 1) return
       swipeTracking = true
       swipeStartY = e.touches[0].clientY
     }
     const onUnlockSwipeEnd = (e: TouchEvent) => {
-      if (!swipeTracking || !this.unlocked || this.chapter !== 'gallery') return
+      if (!swipeTracking) return
       swipeTracking = false
       const endY = e.changedTouches[0]?.clientY ?? swipeStartY
       const dy = swipeStartY - endY
-      if (dy > 64) this.scrollIntoJourney()
+      if (dy > 64) {
+        if (this.awaitingPullOut && !this.unlocked) this.beginPullOutAndUnlock()
+        else if (this.unlocked && this.chapter === 'gallery') this.scrollIntoJourney()
+      }
     }
     this.canvas.addEventListener('touchstart', onUnlockSwipeStart, { passive: true })
     this.canvas.addEventListener('touchend', onUnlockSwipeEnd, { passive: true })
@@ -289,6 +340,11 @@ export class Experience {
     const onKey = (e: KeyboardEvent) => {
       if (this.unlocked) return
       if (this.chapter !== 'gallery') return
+      if (this.awaitingPullOut && (e.key === 'ArrowUp' || e.key === ' ')) {
+        e.preventDefault()
+        this.beginPullOutAndUnlock()
+        return
+      }
       const map: Record<string, GestureDirection> = {
         ArrowLeft: 'left',
         ArrowRight: 'right',
@@ -298,7 +354,7 @@ export class Experience {
       const dir = map[e.key]
       if (!dir) return
       e.preventDefault()
-      this.gallery.tryGesture(dir, this.revealCam)
+      this.gallery.tryGesture(dir)
     }
     window.addEventListener('keydown', onKey)
 
@@ -347,11 +403,15 @@ export class Experience {
   private attachScrollLock(): void {
     const lock = (e: Event) => {
       if (this.unlocked) return
+      // Allow wheel-up after 08/08 to start the pull-out
+      if (this.awaitingPullOut && e instanceof WheelEvent && e.deltaY > 8) {
+        e.preventDefault()
+        this.beginPullOutAndUnlock()
+        return
+      }
       e.preventDefault()
     }
     window.addEventListener('wheel', lock, { passive: false })
-    // Only preventDefault on touchmove while gallery is locked — detach after unlock
-    // so iOS pull-to-refresh / overscroll are not fighting the page.
     window.addEventListener('touchmove', lock, { passive: false })
     this.detachScrollLock = () => {
       window.removeEventListener('wheel', lock)
@@ -375,10 +435,11 @@ export class Experience {
         const p = self.progress
         if (p < 0.33) {
           const t = p / 0.33
-          this.cameraBase.z = THREE.MathUtils.lerp(5.2, -18, t)
-          this.cameraBase.y = THREE.MathUtils.lerp(0.15, 0.2, t)
-          this.cameraBase.x = Math.sin(t * Math.PI) * 0.45
-          this.cameraBase.lookY = THREE.MathUtils.lerp(0, 0.05, t)
+          // From pull-out collage (z≈40) into the letter field (z≈-18)
+          this.cameraBase.z = THREE.MathUtils.lerp(40, -18, t)
+          this.cameraBase.y = THREE.MathUtils.lerp(1.4, 0.2, t)
+          this.cameraBase.x = THREE.MathUtils.lerp(0.6, Math.sin(t * Math.PI) * 0.45, t)
+          this.cameraBase.lookY = THREE.MathUtils.lerp(0.2, 0.05, t)
           this.setChapter('letter')
         } else if (p < 0.66) {
           const t = (p - 0.33) / 0.33
@@ -412,7 +473,6 @@ export class Experience {
       this.transitionFlags.toLetter = true
       const targets = this.letter.getDiscWorldTargets()
       const handoff = this.gallery.getSettledHandoff()
-      // Discs inherit photo textures/poses first, then planes morph into them
       this.letter.playContinuousFromPhotos(handoff)
       if (!prefersReducedMotion()) {
         this.gallery.morphIntoLetter(targets)
@@ -432,7 +492,7 @@ export class Experience {
       this.transitionFlags.toFinale = true
       const worldPos = this.memories.getWorldPositions()
       const colors = this.memories.samplePortalColors(128)
-      // Particles carry sampled portal pixels → morph into letters
+      // Portal particles gather toward the nib, then handwriting begins
       this.finale.playFromPortals(worldPos, colors)
       this.memories.dissolve()
       this.letter.dissolveForFinale()
@@ -461,9 +521,12 @@ export class Experience {
     const h = window.innerHeight
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
+    this.gallery.setAspect(w / h)
+    this.gallery.setPixelHeight(h * this.adaptiveDpr.value)
     this.applyPixelRatio(this.adaptiveDpr.value)
     this.renderer.setSize(w, h, false)
     this.post.setSize(w, h)
+    this.finale.onResize(w, h)
   }
 
   private onVisibility = (): void => {
@@ -478,7 +541,6 @@ export class Experience {
     this.lastFrameMs = dtMs
     const t = this.clock.elapsedTime
 
-    // Adaptive render resolution from measured frame time
     const nextPr = this.adaptiveDpr.sample(dtMs)
     if (Math.abs(nextPr - this.renderer.getPixelRatio()) > 0.04) {
       this.applyPixelRatio(nextPr)
@@ -488,46 +550,44 @@ export class Experience {
     this.gallery.update(t)
     this.letter.update(t, this.pointer)
     this.memories.update(t)
-    this.finale.update(t)
+    this.finale.update(t, dtMs / 1000)
 
-    // Camera: home + GSAP reveal offset + pointer/gyro/idle — always additive
     const reduced = prefersReducedMotion()
-    const parallaxX = reduced ? 0 : this.pointer.x * 0.22 + this.gyro.x * 0.28
-    const parallaxY = reduced ? 0 : this.pointer.y * 0.14 + this.gyro.y * 0.2
-    const breathX = reduced ? 0 : Math.sin(t * 0.45) * 0.1
-    const breathY = reduced ? 0 : Math.cos(t * 0.32) * 0.07
-    const breathZ = reduced ? 0 : Math.sin(t * 0.28) * 0.18
+    const parallaxX = reduced ? 0 : this.pointer.x * 0.18 + this.gyro.x * 0.22
+    const parallaxY = reduced ? 0 : this.pointer.y * 0.12 + this.gyro.y * 0.16
 
-    if (!this.unlocked && this.chapter === 'gallery') {
-      const tx = 0 + this.revealCam.x + parallaxX * 1.1 + breathX
-      const ty = 0.15 + this.revealCam.y + parallaxY * 0.75 + breathY
-      const tz = 5.2 + this.revealCam.z + breathZ + parallaxY * 0.1
-      this.camera.position.x = tx
-      this.camera.position.y = ty
-      this.camera.position.z = tz
-      this.camera.lookAt(
-        parallaxX * 0.75 + this.revealCam.x * 0.3,
-        0.12 + parallaxY * 0.4 + this.revealCam.y * 0.25,
-        -0.5 + this.revealCam.z * 0.4,
-      )
-    } else if (this.unlocked) {
-      const tx = this.cameraBase.x + parallaxX * 0.4 + breathX * 0.35
-      const ty = this.cameraBase.y + parallaxY * 0.3 + breathY * 0.35
-      const tz = this.cameraBase.z + breathZ * 0.25
+    if (!this.unlocked) {
+      // Camera-led ribbon: GalleryWorld owns position/quaternion/FOV
+      this.gallery.applyCamera(this.camera, t, { x: parallaxX, y: parallaxY })
+    } else {
+      const breathX = reduced ? 0 : Math.sin(t * 0.45) * 0.08
+      const breathY = reduced ? 0 : Math.cos(t * 0.32) * 0.05
+      const breathZ = reduced ? 0 : Math.sin(t * 0.28) * 0.12
+      const tx = this.cameraBase.x + parallaxX * 0.35 + breathX
+      const ty = this.cameraBase.y + parallaxY * 0.25 + breathY
+      const tz = this.cameraBase.z + breathZ
       this.camera.position.x += (tx - this.camera.position.x) * 0.1
       this.camera.position.y += (ty - this.camera.position.y) * 0.1
       this.camera.position.z += (tz - this.camera.position.z) * 0.12
+      // Ease FOV back toward a comfortable chapter FOV after dolly-zoom
+      const targetFov = this.chapter === 'finale' ? 42 : 44
+      if (Math.abs(this.camera.fov - targetFov) > 0.05) {
+        this.camera.fov += (targetFov - this.camera.fov) * 0.04
+        this.camera.updateProjectionMatrix()
+      }
       this.camera.lookAt(
-        parallaxX * 0.45,
-        this.cameraBase.lookY + parallaxY * 0.18,
-        this.camera.position.z - 6,
+        parallaxX * 0.4,
+        this.cameraBase.lookY + parallaxY * 0.15,
+        this.camera.position.z - 8,
       )
     }
 
     const scrollDelta = Math.abs(this.scrollProgress - this.lastScrollProgress)
     this.lastScrollProgress = this.scrollProgress
     const speed = !this.unlocked
-      ? Math.min(1, Math.hypot(this.pointer.x, this.pointer.y) * 0.25)
+      ? this.gallery.isMoving()
+        ? 0.55
+        : Math.min(1, Math.hypot(this.pointer.x, this.pointer.y) * 0.2)
       : Math.min(1, scrollDelta * 8)
     this.post.setMotionAmount(speed)
 

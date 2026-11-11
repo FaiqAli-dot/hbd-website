@@ -1,12 +1,19 @@
 :root {
-  --bg: #07060a;
-  --ink: #f3eee6;
-  --ink-muted: rgba(243, 238, 230, 0.7);
+  --bg: #0b080c;
+  --plum-0: #0e080d;
+  --plum-1: #1a0e17;
+  --plum-2: #2a1522;
+  --rose-ink: #f4c9d1;
+  --rose-mid: #e8a0ae;
+  --rose-deep: #e4a3b1;
+  --blush-hi: #fbe0e5;
+  --ink: #efe4e7;
+  --ink-muted: rgba(239, 228, 231, 0.72);
   --champagne: #d4b483;
   --blush: #c4a494;
   --line: rgba(243, 238, 230, 0.16);
   --font-display: 'Syne', 'Avenir Next', sans-serif;
-  --font-body: 'Newsreader', Georgia, serif;
+  --font-body: 'Cormorant Garamond', 'Newsreader', Georgia, serif;
   --font-ui: 'Outfit', 'Avenir Next', sans-serif;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   color-scheme: dark;
@@ -219,6 +226,32 @@ html.gallery-complete .webgl-canvas {
   opacity: 0;
 }
 
+.gallery-hud__caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 5.5rem;
+  margin: 0;
+  text-align: center;
+  font-family: var(--font-body);
+  font-size: clamp(1.05rem, 2.4vw, 1.45rem);
+  font-style: italic;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  opacity: 0;
+  transition: opacity 0.55s var(--ease-out);
+  pointer-events: none;
+  text-shadow: 0 10px 36px rgba(0, 0, 0, 0.55);
+}
+
+.gallery-hud__caption.is-shown {
+  opacity: 0.92;
+}
+
+.gallery-hud.is-complete .gallery-hud__caption {
+  opacity: 0;
+}
+
 .gallery-hud__hint {
   margin: 0;
   font-family: var(--font-display);
@@ -296,6 +329,11 @@ html.gallery-complete .webgl-canvas {
 .memories-overlay.is-active,
 .finale-overlay.is-active {
   opacity: 1;
+  transform: none;
+}
+
+.finale-overlay {
+  /* Handwriting stage owns its own fade; keep transform reset */
   transform: none;
 }
 
@@ -391,9 +429,80 @@ html.gallery-complete .gallery-hud .hand {
 }
 
 .finale-overlay {
-  align-content: end;
-  padding-bottom: 12vh;
+  align-content: center;
+  justify-items: center;
+  padding: 0 1rem 6vh;
   text-align: center;
+  /* Keep overlay clear so Three.js rose trails + atmosphere show through */
+  background: transparent;
+}
+
+.finale-write {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: min(92vw, 1240px);
+  pointer-events: none;
+}
+
+.finale-write__svg {
+  width: min(88vw, 1240px);
+  height: auto;
+  overflow: visible;
+  filter: drop-shadow(0 0 28px rgba(232, 160, 174, 0.18));
+}
+
+.finale-write__msg {
+  margin-top: 2.2vh;
+  text-align: center;
+  color: #e9d3d8;
+  max-width: min(80vw, 760px);
+}
+
+.finale-write__rule {
+  width: min(240px, 40vw);
+  height: 1px;
+  margin: 0 auto 2.6vh;
+  background: linear-gradient(90deg, transparent, var(--rose-mid), transparent);
+  transform: scaleX(0);
+  opacity: 0.7;
+  transform-origin: center;
+}
+
+.finale-write__sub,
+.finale-write__closing,
+.finale-write__sig {
+  margin: 0.35em 0;
+  font-family: var(--font-body);
+  font-size: clamp(1.05rem, 2.05vw, 1.7rem);
+  font-style: italic;
+  font-weight: 300;
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+}
+
+.finale-write__sub span,
+.finale-write__closing span,
+.finale-write__sig span {
+  display: inline-block;
+  will-change: transform, filter, opacity;
+}
+
+.finale-write__closing {
+  font-size: clamp(0.95rem, 1.45vw, 1.2rem);
+  font-style: normal;
+  letter-spacing: 0.06em;
+  opacity: 0.86;
+}
+
+.finale-write__sig {
+  margin-top: 1.6em;
+  font-size: clamp(0.7rem, 0.95vw, 0.85rem);
+  letter-spacing: 0.38em;
+  text-transform: uppercase;
+  font-style: normal;
+  color: var(--rose-mid);
 }
 
 .finale__subline {
@@ -411,6 +520,15 @@ html.gallery-complete .gallery-hud .hand {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--ink-muted);
+}
+
+@media (max-aspect-ratio: 1/1) {
+  .finale-write__svg {
+    width: 90vw;
+  }
+  .finale-write__msg {
+    margin-top: 4vh;
+  }
 }
 
 .scroll-space {

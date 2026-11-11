@@ -1,378 +1,651 @@
 import * as THREE from 'three'
 import gsap from 'gsap'
+import { createTimeline, stagger, utils } from 'animejs'
+import STROKES from './strokesData.js'
 import { finaleCopy } from '../../content/config'
-import {
-  softParticleFragment,
-  softParticleVertex,
-} from '../shaders'
 import { particleBudget, type QualityTier } from '../../utils/quality'
 import { prefersReducedMotion } from '../../utils/motion'
 import { sound } from '../../components/sound'
 
-function makeLetterTexture(ch: string): THREE.CanvasTexture {
-  const canvas = document.createElement('canvas')
-  canvas.width = 256
-  canvas.height = 256
-  const ctx = canvas.getContext('2d')!
-  ctx.clearRect(0, 0, 256, 256)
-  ctx.fillStyle = '#f3e6d2'
-  ctx.font = 'bold 180px Syne, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(ch, 128, 140)
-  const tex = new THREE.CanvasTexture(canvas)
-  tex.colorSpace = THREE.SRGBColorSpace
-  tex.needsUpdate = true
-  return tex
+const NS = 'http://www.w3.org/2000/svg'
+const PALETTE = ['#FCE6EA', '#F4C9D1', '#E8A0AE', '#F2B7C2', '#FBE0E5']
+
+interface StrokeRuntime {
+  word: number
+  kind: string
+  center: string
+  outline: string
+  len: number
+  start: number[]
+  end: number[]
+  wmax: number
+  mp: SVGPathElement
+  L: number
+  obj: { p: number }
+  el: SVGPathElement
+  t0: number
+  t1: number
 }
 
-function sampleLetterPoints(
-  ch: string,
-  target: THREE.Vector3,
-  out: THREE.Vector3[],
-  budget: number,
-): void {
-  const canvas = document.createElement('canvas')
-  canvas.width = 64
-  canvas.height = 64
-  const ctx = canvas.getContext('2d')!
-  ctx.clearRect(0, 0, 64, 64)
-  ctx.fillStyle = '#fff'
-  ctx.font = 'bold 52px Syne, sans-serif'
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillText(ch, 32, 36)
-  const data = ctx.getImageData(0, 0, 64, 64).data
-  const hits: Array<[number, number]> = []
-  for (let y = 0; y < 64; y += 2) {
-    for (let x = 0; x < 64; x += 2) {
-      if (data[(y * 64 + x) * 4 + 3] > 40) hits.push([x, y])
-    }
-  }
-  if (hits.length === 0) {
-    for (let i = 0; i < budget; i++) {
-      out.push(
-        new THREE.Vector3(
-          target.x + (Math.random() - 0.5) * 0.35,
-          target.y + (Math.random() - 0.5) * 0.35,
-          target.z + (Math.random() - 0.5) * 0.1,
-        ),
-      )
-    }
-    return
-  }
-  for (let i = 0; i < budget; i++) {
-    const [x, y] = hits[i % hits.length]
-    out.push(
-      new THREE.Vector3(
-        target.x + (x / 64 - 0.5) * 0.7,
-        target.y + (0.5 - y / 64) * 0.7,
-        target.z + (Math.random() - 0.5) * 0.08,
-      ),
-    )
-  }
-}
-
-interface LetterPiece {
-  mesh: THREE.Mesh
-  from: THREE.Vector3
-  char: string
-}
-
+/**
+ * Chapter 4 — handwritten soft-pink finale.
+ * Anime.js SVG stroke drawing + Three.js rose particle trails.
+ * Portal particles gather into the nib before writing begins.
+ */
 export class FinaleWorld {
   readonly group = new THREE.Group()
-  private letters: LetterPiece[] = []
+  private played = false
   private points: THREE.Points
   private mat: THREE.ShaderMaterial
-  private played = false
   private count: number
-  private light: THREE.PointLight
-  private letterTargets: THREE.Vector3[] = []
-  private morphing = false
   private startPositions: Float32Array
-  private endPositions: Float32Array
   private colors: Float32Array
+  private vel: Float32Array
+  private life: Float32Array
+  private age: Float32Array
+  private head = 0
   private morph = { t: 0 }
+  private morphing = false
+  private writing = false
+  private writeStartedAt = 0
+  private lastNib: [number, number] | null = null
+  private lastStepWall = 0
+  private nibObj = { x: 0, y: 0, lift: 1, w: 0 }
+  private strokes: StrokeRuntime[] = []
+  private wordGroups: SVGGElement[] = []
+  private svg: SVGSVGElement | null = null
+  private nibEl: SVGGElement | null = null
+  private tl: ReturnType<typeof createTimeline> | null = null
+  private marks: Record<string, number> = {}
+  private spans: HTMLElement[] = []
+  private shimmer: Array<{ x: number; y: number; w: number }> = []
+  private seed = 12345
+  private gatherTargets: THREE.Vector3[] = []
+  private fxCam: THREE.OrthographicCamera
 
   constructor(tier: QualityTier) {
-    this.group.position.set(0, 0, -62)
+    this.group.position.set(0, 0, -56)
+    this.count = Math.min(2600, particleBudget(tier).finale)
 
-    const chars = finaleCopy.headline.replace(/\s/g, '').split('')
-    const spacing = 0.72
-    const totalW = (chars.length - 1) * spacing
-
-    chars.forEach((ch, i) => {
-      const tex = makeLetterTexture(ch)
-      const mat = new THREE.MeshStandardMaterial({
-        map: tex,
-        transparent: true,
-        opacity: 0,
-        roughness: 0.35,
-        metalness: 0.25,
-        emissive: new THREE.Color('#d4b483'),
-        emissiveIntensity: 0.28,
-        emissiveMap: tex,
-      })
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.7), mat)
-      const target = new THREE.Vector3(
-        -totalW / 2 + i * spacing + (i >= 5 ? 0.25 : 0),
-        i >= 5 ? -0.55 : 0.45,
-        0,
-      )
-      mesh.position.copy(target)
-      mesh.scale.setScalar(0.15)
-      mesh.userData.target = target.clone()
-      this.group.add(mesh)
-      this.letters.push({ mesh, from: target.clone(), char: ch })
-
-      const perLetter = Math.max(24, Math.floor(particleBudget(tier).finale / chars.length))
-      sampleLetterPoints(ch, target, this.letterTargets, perLetter)
-    })
-
-    this.count = Math.max(this.letterTargets.length, particleBudget(tier).finale)
-    while (this.letterTargets.length < this.count) {
-      const src = this.letterTargets[this.letterTargets.length % Math.max(1, this.letters.length)]
-      this.letterTargets.push(
-        src
-          ? src.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.05, (Math.random() - 0.5) * 0.05, 0))
-          : new THREE.Vector3(),
-      )
-    }
-
-    const positions = new Float32Array(this.count * 3)
-    const scales = new Float32Array(this.count)
-    const seeds = new Float32Array(this.count)
-    this.startPositions = new Float32Array(this.count * 3)
-    this.endPositions = new Float32Array(this.count * 3)
+    const pos = new Float32Array(this.count * 3)
     this.colors = new Float32Array(this.count * 3)
+    const siz = new Float32Array(this.count)
+    const alp = new Float32Array(this.count)
+    this.startPositions = pos
+    this.vel = new Float32Array(this.count * 2)
+    this.life = new Float32Array(this.count)
+    this.age = new Float32Array(this.count).fill(1e9)
 
+    const rose = PALETTE.map((c) => new THREE.Color(c))
     for (let i = 0; i < this.count; i++) {
-      const end = this.letterTargets[i]
-      this.endPositions[i * 3] = end.x
-      this.endPositions[i * 3 + 1] = end.y
-      this.endPositions[i * 3 + 2] = end.z
-      positions[i * 3] = (Math.random() - 0.5) * 10
-      positions[i * 3 + 1] = (Math.random() - 0.5) * 6
-      positions[i * 3 + 2] = (Math.random() - 0.5) * 4
-      this.startPositions[i * 3] = positions[i * 3]
-      this.startPositions[i * 3 + 1] = positions[i * 3 + 1]
-      this.startPositions[i * 3 + 2] = positions[i * 3 + 2]
-      // Default warm placeholder until portal colors are sampled
-      this.colors[i * 3] = 0.85
-      this.colors[i * 3 + 1] = 0.7
-      this.colors[i * 3 + 2] = 0.5
-      scales[i] = 0.45 + Math.random()
-      seeds[i] = Math.random()
+      pos[i * 3] = (Math.random() - 0.5) * 8
+      pos[i * 3 + 1] = (Math.random() - 0.5) * 5
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 2
+      const c = rose[(Math.random() * rose.length) | 0]
+      this.colors[i * 3] = c.r
+      this.colors[i * 3 + 1] = c.g
+      this.colors[i * 3 + 2] = c.b
+      siz[i] = 2 + Math.random() * 5
+      alp[i] = 0
     }
 
     const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-    geo.setAttribute('aScale', new THREE.BufferAttribute(scales, 1))
-    geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1))
-    geo.setAttribute('aColor', new THREE.BufferAttribute(this.colors, 3))
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+    geo.setAttribute('color', new THREE.BufferAttribute(this.colors, 3))
+    geo.setAttribute('size', new THREE.BufferAttribute(siz, 1))
+    geo.setAttribute('aAlpha', new THREE.BufferAttribute(alp, 1))
+
     this.mat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
-      vertexShader: softParticleVertex,
-      fragmentShader: softParticleFragment,
       uniforms: {
-        uTime: { value: 0 },
-        uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
-        uSize: { value: tier === 'low' ? 16 : 26 },
-        uColor: { value: new THREE.Color('#f0d7b0') },
-        uColorMix: { value: 0 },
+        uPR: { value: Math.min(window.devicePixelRatio || 1, 2) },
+        uSize: { value: 1 },
       },
+      vertexShader: `
+        attribute float size;
+        attribute float aAlpha;
+        attribute vec3 color;
+        varying vec3 vC;
+        varying float vA;
+        uniform float uPR;
+        uniform float uSize;
+        void main() {
+          vC = color;
+          vA = aAlpha;
+          vec4 mv = modelViewMatrix * vec4(position, 1.0);
+          gl_PointSize = size * uSize * uPR * (180.0 / max(0.5, -mv.z));
+          gl_Position = projectionMatrix * mv;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vC;
+        varying float vA;
+        void main() {
+          float d = length(gl_PointCoord - 0.5);
+          float a = exp(-d * d * 16.0) * vA;
+          if (a < 0.01) discard;
+          gl_FragColor = vec4(vC * a * 0.95, a);
+        }
+      `,
     })
+
     this.points = new THREE.Points(geo, this.mat)
-    this.points.visible = false
     this.group.add(this.points)
 
-    this.light = new THREE.PointLight('#ffd5a0', 0, 24)
-    this.light.position.set(0, 0, 2)
-    this.group.add(this.light)
+    this.fxCam = new THREE.OrthographicCamera(0, 1, 0, 1, -10, 10)
+  }
+
+  private rnd(): number {
+    this.seed = (this.seed * 16807) % 2147483647
+    return this.seed / 2147483647
+  }
+
+  onResize(w: number, h: number): void {
+    this.fxCam.left = 0
+    this.fxCam.right = w
+    this.fxCam.top = 0
+    this.fxCam.bottom = h
+    this.fxCam.updateProjectionMatrix()
+    this.mat.uniforms.uPR.value = Math.min(window.devicePixelRatio || 1, 2)
   }
 
   /**
-   * Seed particles at portal silhouettes with *sampled* portal pixel colors,
-   * then morph into letter glyphs. Color warms toward the final palette mid-flight.
+   * Portal particles gather into the writing nib, then handwriting begins.
    */
   playFromPortals(
-    portalWorldPositions: THREE.Vector3[],
-    portalColorSamples?: Float32Array[],
+    portalWorldPositions: Array<{ x: number; y: number; z: number }>,
+    portalColors?: Float32Array[],
   ): void {
     if (this.played) return
     this.played = true
-    this.morphing = true
-    sound.play('finale', 0.55)
+    sound.play('finale', 0.45)
 
-    const localPortals = portalWorldPositions.map((p) => {
-      const local = p.clone().sub(this.group.position)
-      local.z = 5.5 + (Math.random() - 0.5) * 2.5
-      return local
-    })
-
-    const nPortals = Math.max(1, localPortals.length)
+    // Seed particles at portal locations in world space (relative to finale group)
+    const pos = this.startPositions
+    const nPortals = Math.max(1, portalWorldPositions.length)
     for (let i = 0; i < this.count; i++) {
-      const portalIdx = i % nPortals
-      const portal = localPortals[portalIdx] ?? new THREE.Vector3()
-      const ring = (i / this.count) * Math.PI * 8
-      const radius = 0.2 + (i % 23) * 0.055
-      this.startPositions[i * 3] = portal.x + Math.cos(ring) * radius + (Math.random() - 0.5) * 0.45
-      this.startPositions[i * 3 + 1] = portal.y + Math.sin(ring) * radius + (Math.random() - 0.5) * 0.45
-      this.startPositions[i * 3 + 2] = portal.z + (Math.random() - 0.5) * 1.2
-
-      // Sample actual portal texture colors when available
-      const samples = portalColorSamples?.[portalIdx]
-      if (samples && samples.length >= 3) {
-        const pixelCount = Math.floor(samples.length / 3)
-        const pi = (i * 7 + portalIdx * 13) % pixelCount
-        this.colors[i * 3] = samples[pi * 3]
-        this.colors[i * 3 + 1] = samples[pi * 3 + 1]
-        this.colors[i * 3 + 2] = samples[pi * 3 + 2]
+      const p = portalWorldPositions[i % nPortals]
+      pos[i * 3] = p.x - this.group.position.x + (Math.random() - 0.5) * 0.8
+      pos[i * 3 + 1] = p.y - this.group.position.y + (Math.random() - 0.5) * 0.8
+      pos[i * 3 + 2] = p.z - this.group.position.z + (Math.random() - 0.5) * 0.4
+      const portalCol = portalColors?.[i % nPortals]
+      if (portalCol && portalCol.length >= 3) {
+        const ci = (i * 3) % Math.max(3, portalCol.length - 2)
+        // Blend portal sample toward soft rose
+        this.colors[i * 3] = portalCol[ci] * 0.35 + 0.95 * 0.65
+        this.colors[i * 3 + 1] = portalCol[ci + 1] * 0.35 + 0.78 * 0.65
+        this.colors[i * 3 + 2] = portalCol[ci + 2] * 0.35 + 0.82 * 0.65
       }
+      const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
+      alp.setX(i, 0.55)
+      this.age[i] = 0
+      this.life[i] = 4
     }
+    this.points.geometry.attributes.position.needsUpdate = true
+    this.points.geometry.attributes.color.needsUpdate = true
+    this.points.geometry.attributes.aAlpha.needsUpdate = true
 
-    const pos = this.points.geometry.getAttribute('position') as THREE.BufferAttribute
-    const col = this.points.geometry.getAttribute('aColor') as THREE.BufferAttribute
-    for (let i = 0; i < this.count; i++) {
-      pos.setXYZ(
-        i,
-        this.startPositions[i * 3],
-        this.startPositions[i * 3 + 1],
-        this.startPositions[i * 3 + 2],
-      )
-      col.setXYZ(i, this.colors[i * 3], this.colors[i * 3 + 1], this.colors[i * 3 + 2])
-    }
-    pos.needsUpdate = true
-    col.needsUpdate = true
-    this.points.visible = true
-    this.mat.uniforms.uSize.value = 42
-    this.mat.uniforms.uColorMix.value = 0
-    this.mat.uniforms.uColor.value.set('#f6e2c0')
-    // Prefer normal blending while colors are vivid so sampled pixels read clearly
-    this.mat.blending = THREE.NormalBlending
-    this.mat.needsUpdate = true
-
-    this.letters.forEach((l) => {
-      const mat = l.mesh.material as THREE.MeshStandardMaterial
-      mat.opacity = 0
-      l.mesh.scale.setScalar(0.35)
-      l.mesh.position.copy(l.mesh.userData.target as THREE.Vector3)
-    })
+    // Gather target: center of the writing plane (local)
+    this.gatherTargets = [new THREE.Vector3(0, 0.4, 0)]
 
     if (prefersReducedMotion()) {
-      for (let i = 0; i < this.count; i++) {
-        pos.setXYZ(
-          i,
-          this.endPositions[i * 3],
-          this.endPositions[i * 3 + 1],
-          this.endPositions[i * 3 + 2],
-        )
-      }
-      pos.needsUpdate = true
-      this.mat.uniforms.uColorMix.value = 1
-      this.letters.forEach((l) => {
-        l.mesh.scale.setScalar(1)
-        ;(l.mesh.material as THREE.MeshStandardMaterial).opacity = 1
-      })
-      this.light.intensity = 2.2
-      this.morphing = false
+      this.mountSvgInstant()
       return
     }
 
+    this.morphing = true
     this.morph.t = 0
-    const tl = gsap.timeline()
-
-    tl.to(this.morph, {
+    // Gather toward nib (~1.1s), then start writing
+    gsap.to(this.morph, {
       t: 1,
-      duration: 2.6,
-      ease: 'power2.inOut',
-      onUpdate: () => this.applyMorph(this.morph.t),
-    }, 0)
+      duration: 1.15,
+      ease: 'power3.inOut',
+      onUpdate: () => this.applyGather(),
+      onComplete: () => {
+        this.morphing = false
+        this.mountAndWrite()
+      },
+    })
+  }
 
-    // Hold memory pixel colors through most of the morph, then warm to gold
-    tl.to(this.mat.uniforms.uColorMix, { value: 1, duration: 1.2, ease: 'power2.inOut' }, 1.55)
-    tl.add(() => {
-      this.mat.blending = THREE.AdditiveBlending
-      this.mat.needsUpdate = true
-    }, 1.55)
-    tl.to(this.mat.uniforms.uSize, { value: 8, duration: 1.4, ease: 'power2.in' }, 1.3)
+  private applyGather(): void {
+    const t = this.morph.t
+    const posAttr = this.points.geometry.getAttribute('position') as THREE.BufferAttribute
+    const target = this.gatherTargets[0]
+    for (let i = 0; i < this.count; i++) {
+      const ix = i * 3
+      // Spiral inward
+      const ang = t * 4.2 + i * 0.07
+      const radius = (1 - t) * (1.2 + (i % 7) * 0.35)
+      const tx = target.x + Math.cos(ang) * radius * 0.15
+      const ty = target.y + Math.sin(ang * 1.3) * radius * 0.1
+      const tz = target.z + (1 - t) * ((i % 5) - 2) * 0.08
+      posAttr.array[ix] += (tx - posAttr.array[ix]) * (0.08 + t * 0.2)
+      posAttr.array[ix + 1] += (ty - posAttr.array[ix + 1]) * (0.08 + t * 0.2)
+      posAttr.array[ix + 2] += (tz - posAttr.array[ix + 2]) * (0.08 + t * 0.2)
+      const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
+      alp.setX(i, 0.25 + 0.55 * t)
+    }
+    posAttr.needsUpdate = true
+    this.points.geometry.attributes.aAlpha.needsUpdate = true
+  }
 
-    this.letters.forEach((l, i) => {
-      const mat = l.mesh.material as THREE.MeshStandardMaterial
-      tl.to(mat, { opacity: 1, duration: 0.85, ease: 'power2.out' }, 1.7 + i * 0.04)
-      tl.to(
-        l.mesh.scale,
-        { x: 1.04, y: 1.04, z: 1, duration: 0.7, ease: 'back.out(1.35)' },
-        1.7 + i * 0.04,
-      )
-      tl.to(l.mesh.scale, { x: 1, y: 1, z: 1, duration: 0.3 }, 2.3 + i * 0.04)
+  private mountSvgInstant(): void {
+    this.mountSvgDom()
+    // Show full ink + message immediately
+    this.strokes.forEach((s) => {
+      s.obj.p = 1
+      s.mp.style.strokeDashoffset = '0'
+    })
+    this.spans.forEach((sp) => {
+      sp.style.opacity = '1'
+      sp.style.filter = 'none'
+      sp.style.transform = 'none'
+    })
+    const rule = document.querySelector('[data-finale-rule]') as HTMLElement | null
+    if (rule) rule.style.transform = 'scaleX(1)'
+    this.writing = false
+  }
+
+  private mountAndWrite(): void {
+    this.mountSvgDom()
+    this.buildTimeline()
+    this.writing = true
+    this.writeStartedAt = performance.now()
+    this.lastStepWall = this.writeStartedAt
+    this.tl?.seek(0)
+  }
+
+  private mountSvgDom(): void {
+    const svg = document.getElementById('finale-write-svg') as unknown as SVGSVGElement | null
+    if (!svg) return
+    this.svg = svg
+    svg.innerHTML = ''
+
+    const defs = document.createElementNS(NS, 'defs')
+    defs.innerHTML = `
+      <linearGradient id="inkG" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#FBE0E5"/>
+        <stop offset=".55" stop-color="#F4C9D1"/>
+        <stop offset="1" stop-color="#E4A3B1"/>
+      </linearGradient>
+      <radialGradient id="nibHalo">
+        <stop offset="0" stop-color="#FFF4F6" stop-opacity=".95"/>
+        <stop offset=".18" stop-color="#F7CBD4" stop-opacity=".55"/>
+        <stop offset=".55" stop-color="#E8A0AE" stop-opacity=".14"/>
+        <stop offset="1" stop-color="#E8A0AE" stop-opacity="0"/>
+      </radialGradient>
+      <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="1.8"/></filter>
+      <filter id="wide" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="5.5"/></filter>
+    `
+    svg.appendChild(defs)
+
+    const maskG = document.createElementNS(NS, 'g')
+    maskG.setAttribute('id', 'finale-masks')
+    svg.appendChild(maskG)
+
+    const inkUseWide = document.createElementNS(NS, 'use')
+    inkUseWide.setAttribute('href', '#finale-ink')
+    inkUseWide.setAttribute('filter', 'url(#wide)')
+    inkUseWide.setAttribute('opacity', '0.14')
+    inkUseWide.style.color = '#E8A0AE'
+    svg.appendChild(inkUseWide)
+
+    const inkUseSoft = document.createElementNS(NS, 'use')
+    inkUseSoft.setAttribute('href', '#finale-ink')
+    inkUseSoft.setAttribute('filter', 'url(#soft)')
+    inkUseSoft.setAttribute('opacity', '0.32')
+    svg.appendChild(inkUseSoft)
+
+    const inkG = document.createElementNS(NS, 'g')
+    inkG.setAttribute('id', 'finale-ink')
+    svg.appendChild(inkG)
+
+    const nib = document.createElementNS(NS, 'g')
+    nib.setAttribute('id', 'finale-nib')
+    nib.setAttribute('opacity', '0')
+    nib.innerHTML = `<circle r="9" fill="url(#nibHalo)"/><circle r="1.15" fill="#FFF6F8"/>`
+    svg.appendChild(nib)
+    this.nibEl = nib
+
+    const portrait = window.innerWidth / window.innerHeight < 1
+    const BIRTH_X = 296
+    const wordTf = portrait
+      ? [`translate(70,0)`, `translate(${-BIRTH_X + 40},132)`]
+      : ['', '']
+    let [bx, by, bw, bh] = STROKES.bbox as number[]
+    if (portrait) {
+      bx = -4
+      by = -10
+      bw = 392
+      bh = 290
+    }
+    svg.setAttribute('viewBox', `${bx} ${by} ${bw} ${bh}`)
+
+    this.wordGroups = [0, 1].map((i) => {
+      const g = document.createElementNS(NS, 'g')
+      g.setAttribute('transform', wordTf[i])
+      inkG.appendChild(g)
+      return g
     })
 
-    tl.to(this.light, { intensity: 2.4, duration: 1.8, ease: 'power2.out' }, 1.4)
-    tl.add(() => {
-      this.morphing = false
-    }, 2.8)
-  }
+    this.strokes = (STROKES.strokes as Array<Omit<StrokeRuntime, 'mp' | 'L' | 'obj' | 'el' | 't0' | 't1'>>).map(
+      (s, i) => {
+        const m = document.createElementNS(NS, 'mask')
+        m.id = `fm${i}`
+        m.setAttribute('maskUnits', 'userSpaceOnUse')
+        m.setAttribute('x', '-1000')
+        m.setAttribute('y', '-1000')
+        m.setAttribute('width', '4000')
+        m.setAttribute('height', '4000')
+        const mp = document.createElementNS(NS, 'path')
+        mp.setAttribute('d', s.center)
+        mp.setAttribute('fill', 'none')
+        mp.setAttribute('stroke', '#fff')
+        mp.setAttribute('stroke-width', (s.wmax + 2.2).toFixed(2))
+        mp.setAttribute('stroke-linecap', 'butt')
+        mp.setAttribute('stroke-linejoin', 'round')
+        m.appendChild(mp)
+        maskG.appendChild(m)
 
-  play(camera: THREE.PerspectiveCamera): void {
-    if (this.played) return
-    const fake = [
-      new THREE.Vector3(-2, 1, -42),
-      new THREE.Vector3(2, 1, -42),
-      new THREE.Vector3(-1.5, -1, -42),
-      new THREE.Vector3(2, -1, -42),
-    ]
-    this.playFromPortals(fake)
-    if (!prefersReducedMotion()) {
-      gsap.to(camera.position, { z: camera.position.z - 1.0, duration: 2.2, ease: 'power3.inOut' })
+        const p = document.createElementNS(NS, 'path')
+        p.setAttribute('d', s.outline)
+        p.setAttribute('fill', 'url(#inkG)')
+        p.setAttribute('mask', `url(#fm${i})`)
+        this.wordGroups[s.word].appendChild(p)
+
+        const L = mp.getTotalLength()
+        mp.style.strokeDasharray = `${L} ${L + 10}`
+        mp.style.strokeDashoffset = String(L)
+        return { ...s, mp, L, obj: { p: 0 }, el: p, t0: 0, t1: 0 }
+      },
+    )
+
+    // Message words
+    const COPY = {
+      sub: finaleCopy.subline,
+      closing: finaleCopy.closing,
+      sig: '— WITH ALL MY LOVE —',
     }
-  }
-
-  absorbFromPortals(portalPositions: THREE.Vector3[]): void {
-    void portalPositions
-  }
-
-  private applyMorph(t: number): void {
-    const pos = this.points.geometry.getAttribute('position') as THREE.BufferAttribute
-    const ease = t * t * (3 - 2 * t)
-    for (let i = 0; i < this.count; i++) {
-      const sx = this.startPositions[i * 3]
-      const sy = this.startPositions[i * 3 + 1]
-      const sz = this.startPositions[i * 3 + 2]
-      const ex = this.endPositions[i * 3]
-      const ey = this.endPositions[i * 3 + 1]
-      const ez = this.endPositions[i * 3 + 2]
-      const arc = Math.sin(Math.PI * ease) * (0.6 + (i % 5) * 0.08)
-      pos.setXYZ(
-        i,
-        sx + (ex - sx) * ease,
-        sy + (ey - sy) * ease + arc,
-        sz + (ez - sz) * ease,
-      )
-    }
-    pos.needsUpdate = true
-  }
-
-  update(time: number): void {
-    this.mat.uniforms.uTime.value = time
-    if (this.played && !this.morphing && !prefersReducedMotion()) {
-      this.letters.forEach((l, i) => {
-        l.mesh.position.y += Math.sin(time * 0.8 + i) * 0.0003
+    this.spans = []
+    for (const [key, sel] of [
+      ['sub', '[data-finale-sub]'],
+      ['closing', '[data-finale-closing]'],
+      ['sig', '[data-finale-sig]'],
+    ] as const) {
+      const el = document.querySelector(sel) as HTMLElement | null
+      if (!el) continue
+      el.textContent = ''
+      const text = COPY[key]
+      text.split(' ').forEach((w, i, a) => {
+        const sp = document.createElement('span')
+        sp.textContent = w
+        sp.style.opacity = '0'
+        el.appendChild(sp)
+        if (i < a.length - 1) el.appendChild(document.createTextNode(' '))
+        this.spans.push(sp)
       })
     }
+
+    this.shimmer = []
+    this.strokes.forEach((s) => {
+      for (let k = 0; k < Math.ceil(s.L / 14); k++) {
+        const q = s.mp.getPointAtLength(this.rnd() * s.L)
+        this.shimmer.push({ x: q.x, y: q.y, w: s.word })
+      }
+    })
+  }
+
+  private buildTimeline(): void {
+    const tl = createTimeline({ autoplay: false, defaults: { ease: 'inOutSine' } })
+    const SPEED = { 0: 520, 1: 540 }
+    let t = 500
+    let prevEnd: { s: StrokeRuntime } | null = null
+    const marks: Record<string, number> = {}
+
+    this.strokes.forEach((s, k) => {
+      if (prevEnd) {
+        const dx = s.start[0] - prevEnd.s.end[0]
+        const dy = s.start[1] - prevEnd.s.end[1]
+        const gap =
+          s.word !== prevEnd.s.word
+            ? 480
+            : s.kind === 'detail' || s.kind === 'swash'
+              ? 240
+              : 70 + Math.hypot(dx, dy) * 0.55
+        tl.add(
+          this.nibObj,
+          {
+            x: [prevEnd.s.end[0], s.start[0]],
+            y: [prevEnd.s.end[1], s.start[1]],
+            lift: [1, 1],
+            duration: gap,
+            ease: 'inOutQuad',
+          },
+          t,
+        )
+        t += gap
+      }
+      if (k === 0) marks.start = t
+      if (s.word === 1 && marks.word2 == null) marks.word2 = t
+      if (s.kind === 'swash') marks.swash = t
+      const dur =
+        s.kind === 'swash'
+          ? 950
+          : s.kind === 'detail'
+            ? 160 + s.len * 6
+            : Math.max(240, (s.len / SPEED[s.word as 0 | 1]) * 1000)
+      tl.add(s.obj, { p: [0, 1], duration: dur, ease: s.kind === 'swash' ? 'inOutSine' : 'inOut(1.4)' }, t)
+      s.t0 = t
+      s.t1 = t + dur
+      t += dur
+      prevEnd = { s }
+    })
+
+    marks.inkDone = t
+    t += 650
+    marks.msg = t
+
+    const rule = document.querySelector('[data-finale-rule]')
+    if (rule) {
+      tl.add(rule, { scaleX: [0, 1], duration: 900, ease: 'out(3)' }, t)
+    }
+    if (this.spans.length) {
+      tl.add(
+        this.spans,
+        {
+          opacity: [0, 1],
+          translateY: [10, 0],
+          filter: ['blur(6px)', 'blur(0px)'],
+          duration: 900,
+          ease: 'out(3)',
+          delay: stagger(55, { start: 250 }),
+        },
+        t,
+      )
+    }
+    marks.end = t + 250 + this.spans.length * 55 + 900
+    this.marks = marks
+    this.tl = tl
+  }
+
+  private toScreen(x: number, y: number, word: number): [number, number] {
+    if (!this.svg || !this.wordGroups[word]) return [window.innerWidth / 2, window.innerHeight / 2]
+    const pt = this.svg.createSVGPoint()
+    pt.x = x
+    pt.y = y
+    const m = this.wordGroups[word].getScreenCTM()
+    if (!m) return [window.innerWidth / 2, window.innerHeight / 2]
+    const q = pt.matrixTransform(m)
+    return [q.x, q.y]
+  }
+
+  private emit(x: number, y: number, vx: number, vy: number, n: number, glowy: boolean): void {
+    const pos = this.startPositions
+    const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
+    const siz = this.points.geometry.getAttribute('size') as THREE.BufferAttribute
+    // Map screen → local approx for world particles near writing plane
+    const lx = ((x / window.innerWidth) * 2 - 1) * 4.5
+    const ly = -((y / window.innerHeight) * 2 - 1) * 2.6
+
+    for (let k = 0; k < n; k++) {
+      const i = this.head
+      this.head = (this.head + 1) % this.count
+      const a = this.rnd() * Math.PI * 2
+      const sp = 0.015 + this.rnd() * 0.04
+      pos[i * 3] = lx + (this.rnd() - 0.5) * 0.08
+      pos[i * 3 + 1] = ly + (this.rnd() - 0.5) * 0.08
+      pos[i * 3 + 2] = (this.rnd() - 0.5) * 0.2
+      this.vel[i * 2] = Math.cos(a) * sp - vx * 0.00008
+      this.vel[i * 2 + 1] = Math.sin(a) * sp - vy * 0.00008 - 0.01
+      this.life[i] = (glowy ? 2.4 : 1.1) + this.rnd() * 1.3
+      this.age[i] = 0
+      siz.setX(i, (glowy ? 7 : 2.2) + this.rnd() * (glowy ? 9 : 4.5))
+      const c = new THREE.Color(PALETTE[(this.rnd() * PALETTE.length) | 0])
+      this.colors[i * 3] = c.r
+      this.colors[i * 3 + 1] = c.g
+      this.colors[i * 3 + 2] = c.b
+      alp.setX(i, 0.8)
+    }
+    this.points.geometry.attributes.position.needsUpdate = true
+    this.points.geometry.attributes.color.needsUpdate = true
+    this.points.geometry.attributes.size.needsUpdate = true
+    alp.needsUpdate = true
+  }
+
+  private stepWriting(_frameDt: number): void {
+    if (!this.tl || !this.writing) return
+    // Drive from wall clock so low headless FPS cannot crawl the handwriting.
+    const now = performance.now()
+    const ms = Math.max(0, now - this.writeStartedAt)
+    const dt = Math.min(0.05, Math.max(0.001, (now - this.lastStepWall) / 1000))
+    this.lastStepWall = now
+    this.tl.seek(ms)
+    void _frameDt
+
+    let active: StrokeRuntime | null = null
+    for (const s of this.strokes) {
+      const p = s.obj.p
+      s.mp.style.strokeDashoffset = (s.L * (1 - p)).toFixed(2)
+      if (p > 0 && p < 1) active = s
+    }
+
+    let nx: number
+    let ny: number
+    let word: number
+    let lift: number
+    if (active) {
+      const q = active.mp.getPointAtLength(active.L * active.obj.p)
+      nx = q.x
+      ny = q.y
+      word = active.word
+      lift = 0
+    } else {
+      nx = this.nibObj.x
+      ny = this.nibObj.y
+      const nxt = this.strokes.find((s) => s.t0 >= ms)
+      const prv = [...this.strokes].reverse().find((s) => s.t1 <= ms)
+      word = (nxt || prv || this.strokes[0]).word
+      lift = 1
+      if (ms < this.strokes[0].t0) {
+        nx = this.strokes[0].start[0]
+        ny = this.strokes[0].start[1]
+      }
+    }
+
+    const writing =
+      ms >= this.strokes[0].t0 - 350 && ms <= (this.marks.inkDone ?? 9000) + 250
+    const nibA =
+      ms < this.strokes[0].t0
+        ? utils.clamp((ms - (this.strokes[0].t0 - 450)) / 350, 0, 1)
+        : ms > (this.marks.inkDone ?? 9000)
+          ? utils.clamp(1 - (ms - (this.marks.inkDone ?? 9000)) / 420, 0, 1)
+          : lift
+            ? 0.55
+            : 1
+
+    if (this.nibEl) {
+      const tf = this.wordGroups[word]?.getAttribute('transform') || ''
+      this.nibEl.setAttribute(
+        'transform',
+        `${tf} translate(${nx.toFixed(2)},${ny.toFixed(2)}) scale(${lift ? 1.25 : 1})`,
+      )
+      this.nibEl.setAttribute('opacity', nibA.toFixed(3))
+    }
+
+    const [sx, sy] = this.toScreen(nx, ny, word)
+    if (this.lastNib && writing && !lift) {
+      const vx = (sx - this.lastNib[0]) / Math.max(dt, 1e-3)
+      const vy = (sy - this.lastNib[1]) / Math.max(dt, 1e-3)
+      const spd = Math.hypot(vx, vy)
+      const n = Math.min(8, 2 + Math.floor(spd / 200))
+      this.emit(sx, sy, vx, vy, n, false)
+      if (this.rnd() < 0.22) this.emit(sx, sy, vx, vy, 1, true)
+    }
+    this.lastNib = [sx, sy]
+
+    // Integrate trail particles
+    const pos = this.startPositions
+    const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
+    for (let i = 0; i < this.count; i++) {
+      if (this.age[i] > this.life[i]) {
+        alp.setX(i, 0)
+        continue
+      }
+      this.age[i] += dt
+      const k = this.age[i] / this.life[i]
+      const cx = Math.sin(pos[i * 3 + 1] * 2 + this.age[i] * 1.3) * 0.02
+      this.vel[i * 2] += cx * dt
+      this.vel[i * 2] *= 0.985
+      this.vel[i * 2 + 1] = this.vel[i * 2 + 1] * 0.985 - 0.012 * dt
+      pos[i * 3] += this.vel[i * 2]
+      pos[i * 3 + 1] += this.vel[i * 2 + 1]
+      alp.setX(i, Math.pow(1 - k, 1.5) * Math.min(1, this.age[i] * 8) * 0.85)
+    }
+
+    if (ms > (this.marks.inkDone ?? 9000)) {
+      const g = utils.clamp((ms - (this.marks.inkDone ?? 9000)) / 1500, 0, 1)
+      if (this.rnd() < 0.55 * g && this.shimmer.length) {
+        const m = this.shimmer[(this.rnd() * this.shimmer.length) | 0]
+        const [qx, qy] = this.toScreen(m.x, m.y, m.w)
+        this.emit(qx, qy, 0, 0, 1, this.rnd() < 0.3)
+      }
+    }
+
+    this.points.geometry.attributes.position.needsUpdate = true
+    alp.needsUpdate = true
+
+    if (ms >= (this.marks.end ?? 12300)) {
+      this.writing = false
+    }
+  }
+
+  /** Seek writing animation to a fraction (0–1 of ink+message) for captures */
+  seekFraction(frac: number): void {
+    if (!this.tl) {
+      this.mountAndWrite()
+    }
+    if (!this.tl) return
+    const end = this.marks.end ?? 12300
+    const ms = Math.max(0, Math.min(end, frac * end))
+    this.writeStartedAt = performance.now() - ms
+    this.lastStepWall = performance.now()
+    this.writing = true
+    this.stepWriting(0.008)
+  }
+
+  update(time: number, dt = 1 / 60): void {
+    void time
+    void this.fxCam
+    if (this.morphing) return
+    if (this.writing) this.stepWriting(dt)
   }
 
   dispose(): void {
-    this.letters.forEach((l) => {
-      l.mesh.geometry.dispose()
-      const m = l.mesh.material as THREE.MeshStandardMaterial
-      m.map?.dispose()
-      m.emissiveMap?.dispose()
-      m.dispose()
-    })
     this.points.geometry.dispose()
     this.mat.dispose()
+    this.tl = null
   }
 }
