@@ -196,7 +196,8 @@ export class GalleryWorld {
 
   private standOff(h: number, w: number): number {
     const tanH = Math.tan(THREE.MathUtils.degToRad(this.fov / 2))
-    return Math.max(h / (0.56 * 2 * tanH), w / (0.8 * 2 * tanH * this.aspect))
+    // Tight framing (~88% height fill) — storyboard settle fills the frame
+    return Math.max(h / (0.88 * 2 * tanH), w / (0.96 * 2 * tanH * this.aspect))
   }
 
   private buildPaths(): void {
@@ -212,13 +213,10 @@ export class GalleryWorld {
       { cam: V(intro.cam), look: V(intro.look), n: new THREE.Vector3(0, 0, 1) },
     ]
     this.photos.forEach((pm) => {
+      // Always use aspect-aware stand-off so settled/mid-flight framing stays tight
+      // (authored layout.cam was calibrated looser and left too much negative space).
       const d = this.standOff(pm.layout.size[1], pm.layout.size[0]) * aspectScale
-      // Prefer authored cam when close to desktop aspect; otherwise standOff
-      const authoredCam = pm.layout.cam ? V(pm.layout.cam) : null
-      const cam =
-        authoredCam && Math.abs(this.aspect - 16 / 9) < 0.45
-          ? authoredCam
-          : V(pm.layout.pos).add(pm.normal.clone().multiplyScalar(d))
+      const cam = V(pm.layout.pos).add(pm.normal.clone().multiplyScalar(d))
       stations.push({
         cam,
         look: V(pm.layout.pos),
@@ -246,6 +244,8 @@ export class GalleryWorld {
         const aP2 = V(authored.P2)
         const mapCtrl = (p: THREE.Vector3, nearA: boolean) => {
           const local = nearA ? p.clone().sub(aC0) : p.clone().sub(aC3)
+          // Soften anticipation pull-backs so mid-flight stays framed on the ribbon
+          if (!isOutro) local.multiplyScalar(0.38)
           return (nearA ? A.cam : B.cam).clone().add(local)
         }
         P1 = mapCtrl(aP1, true)
@@ -309,18 +309,18 @@ export class GalleryWorld {
   }
 
   private buildAtmosphere(BG: THREE.Color): void {
-    // Destination glow — deep rose at the far end of the ribbon
+    // Soft plum wash at the far end — never a bright white hotspot
     {
       const m = new THREE.ShaderMaterial({
         depthWrite: false,
         transparent: true,
-        blending: THREE.AdditiveBlending,
+        blending: THREE.NormalBlending,
         fog: false,
         vertexShader: `varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-        fragmentShader: `varying vec2 vUv; void main(){ vec2 d=(vUv-vec2(.5,.47))*vec2(1.7,1.); float r=length(d); vec3 c=vec3(.030,.009,.016)*exp(-r*r*9.)+vec3(.006,.0025,.004)*exp(-r*r*2.2)+vec3(.05,.028,.018)*exp(-r*r*90.)*.5; gl_FragColor=vec4(c,1.);}`,
+        fragmentShader: `varying vec2 vUv; void main(){ vec2 d=(vUv-vec2(.5,.47))*vec2(1.7,1.); float r=length(d); float a=exp(-r*r*3.5)*.55; vec3 c=vec3(.12,.05,.08); gl_FragColor=vec4(c,a);}`,
       })
-      const pl = new THREE.Mesh(new THREE.PlaneGeometry(220, 124), m)
-      pl.position.set(-1, 0, -75)
+      const pl = new THREE.Mesh(new THREE.PlaneGeometry(160, 90), m)
+      pl.position.set(-1, 0, -70)
       this.group.add(pl)
     }
 
@@ -500,7 +500,7 @@ export class GalleryWorld {
     })
   }
 
-  /** Dolly-zoom pull-out after 08/08 — FOV 44→10.5 over 4.2s */
+  /** Dolly-zoom pull-out after 08/08 — pull back, then settle into a large collage */
   pullOut(onDone?: () => void): boolean {
     if (this.moving || this.pullOutActive || this.pullOutDone) return false
     if (!this.complete) return false
@@ -509,8 +509,29 @@ export class GalleryWorld {
     const pathIdx = this.paths.length - 1
     return this.animatePath(pathIdx, () => {
       this.pullOutDone = true
+      this.finalizeCollage()
       onDone?.()
     })
+  }
+
+  /** Snap the lit collage into its settled composition (idempotent). */
+  finalizeCollage(): void {
+    this.composeCollageSettle(1)
+    if (this.threadMat) this.threadMat.uniforms.uLit.value = 0.15
+    this.photos.forEach((pm) => {
+      pm.material.uniforms.uReveal.value = 1
+      pm.material.uniforms.uFocus.value = 0.4
+      pm.material.uniforms.uFogD.value = 0.004
+    })
+  }
+
+  /** Near-field framing used after pull-out unlock */
+  getCollageCamera(): { x: number; y: number; z: number; lookY: number; fov: number } {
+    if (this.aspect < 0.85) {
+      // Portrait: pull back a touch so the 4×2 stack stays inside the frame
+      return { x: 0.0, y: 0.05, z: 7.2, lookY: 0.0, fov: 32 }
+    }
+    return { x: 0.05, y: 0.12, z: 5.6, lookY: 0.02, fov: 28 }
   }
 
   undo(_camera?: unknown): boolean {
@@ -572,10 +593,11 @@ export class GalleryWorld {
     }
 
     const proxy = { t: 0 }
+    // Linear wall-clock progress — easing is applied once in applyCamera
     gsap.to(proxy, {
       t: 1,
       duration: path.duration,
-      ease: 'memoryGlide',
+      ease: 'none',
       onUpdate: () => {
         this.state.t = proxy.t
       },
@@ -623,20 +645,97 @@ export class GalleryWorld {
     camera.position.copy(pos)
     camera.quaternion.copy(this.tmpQ)
 
-    // Dolly-zoom on outro path
+    // Dolly-zoom pull-out: dramatic pull-back, then settle into a CLOSE
+    // composed collage that fills ~55–65% of the viewport.
     const outro = pathIdx === this.paths.length - 1
-    const fz = outro ? e : 0
-    const fov = 44 + (10.5 - 44) * fz
+    // Outro settle uses eased path progress (single ease from linear gsap clock)
+    const fz = outro ? (this.pullOutDone ? 1 : e) : 0
+    // 44 → ~16 mid → settle 28° (wider FOV = larger on-screen collage)
+    const fov =
+      44 +
+      (16 - 44) * Math.min(1, fz * 1.15) +
+      (28 - 16) * Math.max(0, (fz - 0.58) / 0.42)
     if (Math.abs(camera.fov - fov) > 1e-4) {
       camera.fov = fov
       camera.updateProjectionMatrix()
     }
     this.photos.forEach((pm) => {
-      pm.material.uniforms.uFogD.value = 0.03 + (0.006 - 0.03) * fz
+      pm.material.uniforms.uFogD.value = 0.03 + (0.004 - 0.03) * fz
     })
+    if (this.threadMat && outro) {
+      this.threadMat.uniforms.uLit.value = Math.max(0.12, 1 - fz * 0.9)
+    }
+
+    // Compose prints + pull camera onto the framed settle
+    if (outro && fz > 0.42) {
+      const settle = (fz - 0.42) / 0.58
+      this.composeCollageSettle(settle)
+      if (fz > 0.58) {
+        const camEase = gsap.parseEase('power2.out')((fz - 0.58) / 0.42)
+        const c = this.getCollageCamera()
+        const framed = new THREE.Vector3(c.x, c.y, c.z)
+        const look = new THREE.Vector3(0, c.lookY, -1.1)
+        pos.lerp(framed, camEase)
+        const qFramed = lookQ(framed, look)
+        this.tmpQ.slerp(qFramed, camEase)
+        camera.position.copy(pos)
+        camera.quaternion.copy(this.tmpQ)
+      }
+    }
 
     this.updateReveals()
     return fov
+  }
+
+  /** Deliberate near-field collage — large, legible, rectangular, composed */
+  private composeCollageSettle(t: number): void {
+    const k = THREE.MathUtils.clamp(t, 0, 1)
+    const ease = gsap.parseEase('power2.out')(k)
+    // Landscape: 2×4. Portrait: 4×2 so all eight stay inside the frame.
+    const portrait = this.aspect < 0.85
+    const targets = portrait
+      ? [
+          { x: -1.05, y: 2.55, z: -0.55 },
+          { x: 1.05, y: 2.45, z: -0.85 },
+          { x: -1.1, y: 0.85, z: -0.7 },
+          { x: 1.1, y: 0.75, z: -1.05 },
+          { x: -1.05, y: -0.85, z: -1.2 },
+          { x: 1.05, y: -0.95, z: -0.95 },
+          { x: -1.1, y: -2.55, z: -1.35 },
+          { x: 1.1, y: -2.45, z: -1.15 },
+        ]
+      : [
+          { x: -2.15, y: 1.2, z: -0.55 },
+          { x: -0.72, y: 1.28, z: -0.95 },
+          { x: 0.72, y: 1.15, z: -0.7 },
+          { x: 2.15, y: 1.05, z: -1.15 },
+          { x: -2.2, y: -1.05, z: -1.35 },
+          { x: -0.72, y: -1.18, z: -1.0 },
+          { x: 0.72, y: -1.1, z: -1.45 },
+          { x: 2.2, y: -0.98, z: -1.2 },
+        ]
+    const rolls = [0.035, -0.03, 0.02, -0.04, 0.03, -0.025, 0.015, -0.02]
+    // Portrait needs a slightly closer camera plane; scale prints a touch smaller
+    const scale = portrait ? 0.82 : 1
+    this.photos.forEach((pm, i) => {
+      const dest = targets[i]
+      const ox = pm.layout.pos[0]
+      const oy = pm.layout.pos[1]
+      const oz = pm.layout.pos[2]
+      pm.group.position.set(
+        THREE.MathUtils.lerp(ox, dest.x, ease),
+        THREE.MathUtils.lerp(oy, dest.y, ease),
+        THREE.MathUtils.lerp(oz, dest.z, ease),
+      )
+      // Face the camera squarely; stay rectangular until letter morph
+      const face = new THREE.Quaternion()
+      face.setFromAxisAngle(new THREE.Vector3(0, 0, 1), rolls[i] ?? 0)
+      pm.group.quaternion.slerp(face, ease * 0.92)
+      pm.group.scale.setScalar(scale)
+      pm.material.uniforms.uReveal.value = 1
+      pm.material.uniforms.uFocus.value = 0.4
+      pm.material.uniforms.uFogD.value = 0.004
+    })
   }
 
   private updateReveals(): void {
@@ -660,7 +759,8 @@ export class GalleryWorld {
       let r = 0
       if (k === this.paths.length - 1) r = 1
       else if (i < k) r = 1
-      else if (i === k) r = gsap.utils.clamp(0, 1, (t - 0.58) / 0.42)
+      // Light the approaching print earlier so mid-flight reads as framed travel
+      else if (i === k) r = gsap.utils.clamp(0, 1, (t - 0.28) / 0.55)
       else if (pm.revealed) r = 1
       pm.material.uniforms.uReveal.value = r
       pm.material.uniforms.uFocus.value = i === k && k < 8 ? r : 0
@@ -687,16 +787,6 @@ export class GalleryWorld {
       )
     })
     return tl
-  }
-
-  gatherForLetter(): gsap.core.Timeline {
-    return this.morphIntoLetter(
-      Array.from({ length: 6 }, (_, i) => ({
-        x: ((i % 3) - 1) * 2.4,
-        y: (Math.floor(i / 3) - 0.5) * 2.2,
-        z: -20,
-      })),
-    )
   }
 
   shakeHint(root: THREE.Object3D): void {

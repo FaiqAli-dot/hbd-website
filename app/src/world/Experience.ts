@@ -98,6 +98,10 @@ export class Experience {
     this.memories = new MemoriesWorld()
     this.finale = new FinaleWorld(this.tier)
     this.hand3d = new Hand3D()
+    // Keep later chapters fully hidden so their discs/rings never leak into Ch1 collage
+    this.letter.group.visible = false
+    this.memories.group.visible = false
+    this.finale.group.visible = false
     this.scene.add(
       this.gallery.group,
       this.letter.group,
@@ -174,10 +178,11 @@ export class Experience {
     }
     if (this.gallery.hasStartedPullOut()) return
 
+    this.hand3d.setVisible(false)
     const ok = this.gallery.pullOut(() => {
       this.unlockJourney()
       // Hold the lit collage briefly so the dolly-zoom read lands, then ease into Ch2
-      window.setTimeout(() => this.scrollIntoJourney(), prefersReducedMotion() ? 0 : 1600)
+      window.setTimeout(() => this.scrollIntoJourney(), prefersReducedMotion() ? 0 : 1800)
     })
     if (!ok && this.gallery.getProgress().complete) {
       // Reduced-motion / already settled fallback
@@ -212,8 +217,12 @@ export class Experience {
     this.hand3d.demonstrate('scroll-up')
     this.ui.setHint(galleryCopy.scrollHint, '')
 
-    // Seed scroll camera at the pull-out collage
-    this.cameraBase = { x: 0.6, y: 1.4, z: 40, lookY: 0.2 }
+    // Seed scroll camera at the near-field collage framing and hold FOV
+    const collage = this.gallery.getCollageCamera()
+    this.cameraBase = { x: collage.x, y: collage.y, z: collage.z, lookY: collage.lookY }
+    this.camera.fov = collage.fov
+    this.camera.updateProjectionMatrix()
+    this.gallery.finalizeCollage()
 
     void document.body.offsetHeight
     requestAnimationFrame(() => {
@@ -435,11 +444,11 @@ export class Experience {
         const p = self.progress
         if (p < 0.33) {
           const t = p / 0.33
-          // From pull-out collage (z≈40) into the letter field (z≈-18)
-          this.cameraBase.z = THREE.MathUtils.lerp(40, -18, t)
-          this.cameraBase.y = THREE.MathUtils.lerp(1.4, 0.2, t)
-          this.cameraBase.x = THREE.MathUtils.lerp(0.6, Math.sin(t * Math.PI) * 0.45, t)
-          this.cameraBase.lookY = THREE.MathUtils.lerp(0.2, 0.05, t)
+          // From near collage (z≈5.2) into the letter field (z≈-18)
+          this.cameraBase.z = THREE.MathUtils.lerp(6.8, -18, t)
+          this.cameraBase.y = THREE.MathUtils.lerp(0.25, 0.2, t)
+          this.cameraBase.x = THREE.MathUtils.lerp(0.1, Math.sin(t * Math.PI) * 0.45, t)
+          this.cameraBase.lookY = 0.05
           this.setChapter('letter')
         } else if (p < 0.66) {
           const t = (p - 0.33) / 0.33
@@ -469,10 +478,16 @@ export class Experience {
     if (chapter !== 'gallery') this.hand3d.setVisible(false)
     else this.hand3d.setVisible(true)
 
+    // Clamp bloom hard on the handwritten finale — no blown-out white disc
+    this.post.setBloomMul(chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : 0.9)
+    this.renderer.toneMappingExposure = chapter === 'finale' ? 0.88 : 1.0
+
     if (chapter === 'letter' && !this.transitionFlags.toLetter) {
       this.transitionFlags.toLetter = true
+      this.letter.group.visible = true
       const targets = this.letter.getDiscWorldTargets()
       const handoff = this.gallery.getSettledHandoff()
+      // Square → disc morph happens together AFTER the pull-out collage has settled
       this.letter.playContinuousFromPhotos(handoff)
       if (!prefersReducedMotion()) {
         this.gallery.morphIntoLetter(targets)
@@ -482,6 +497,7 @@ export class Experience {
 
     if (chapter === 'memories' && !this.transitionFlags.toMemories) {
       this.transitionFlags.toMemories = true
+      this.memories.group.visible = true
       if (!prefersReducedMotion()) {
         this.letter.expandTowardPortals(this.memories.layoutTargets())
       }
@@ -490,12 +506,19 @@ export class Experience {
 
     if (chapter === 'finale' && !this.transitionFlags.toFinale) {
       this.transitionFlags.toFinale = true
+      this.finale.group.visible = true
       const worldPos = this.memories.getWorldPositions()
       const colors = this.memories.samplePortalColors(128)
-      // Portal particles gather toward the nib, then handwriting begins
+      // Portal particles gather into the nib, then dissolve completely before writing
       this.finale.playFromPortals(worldPos, colors)
       this.memories.dissolve()
       this.letter.dissolveForFinale()
+      // Hard-hide leftovers so no gold rings / portal discs remain behind the ink
+      window.setTimeout(() => {
+        this.letter.group.visible = false
+        this.memories.group.visible = false
+        this.gallery.group.visible = false
+      }, 1400)
     }
   }
 
@@ -569,16 +592,19 @@ export class Experience {
       this.camera.position.x += (tx - this.camera.position.x) * 0.1
       this.camera.position.y += (ty - this.camera.position.y) * 0.1
       this.camera.position.z += (tz - this.camera.position.z) * 0.12
-      // Ease FOV back toward a comfortable chapter FOV after dolly-zoom
-      const targetFov = this.chapter === 'finale' ? 42 : 44
+      // Hold the collage FOV while still on gallery; only widen after Ch2+
+      const targetFov =
+        this.chapter === 'finale' ? 42 : this.chapter === 'gallery' ? 28 : 44
       if (Math.abs(this.camera.fov - targetFov) > 0.05) {
-        this.camera.fov += (targetFov - this.camera.fov) * 0.04
+        this.camera.fov += (targetFov - this.camera.fov) * 0.06
         this.camera.updateProjectionMatrix()
       }
+      const lookZ =
+        this.chapter === 'gallery' ? this.camera.position.z - 6.7 : this.camera.position.z - 8
       this.camera.lookAt(
         parallaxX * 0.4,
         this.cameraBase.lookY + parallaxY * 0.15,
-        this.camera.position.z - 8,
+        lookZ,
       )
     }
 

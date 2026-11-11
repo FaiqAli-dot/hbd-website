@@ -433,8 +433,13 @@ html.gallery-complete .gallery-hud .hand {
   justify-items: center;
   padding: 0 1rem 6vh;
   text-align: center;
-  /* Keep overlay clear so Three.js rose trails + atmosphere show through */
-  background: transparent;
+  /* Deep plum wash — no white hotspot; particles still read through softly */
+  background: radial-gradient(
+    115% 85% at 50% 42%,
+    rgba(42, 21, 34, 0.92) 0%,
+    rgba(26, 14, 23, 0.96) 42%,
+    rgba(14, 8, 13, 0.98) 78%
+  );
 }
 
 .finale-write {
@@ -454,10 +459,13 @@ html.gallery-complete .gallery-hud .hand {
 }
 
 .finale-write__msg {
-  margin-top: 2.2vh;
+  margin-top: 2.6vh;
   text-align: center;
-  color: #e9d3d8;
+  color: #f3e4e8;
   max-width: min(80vw, 760px);
+  text-shadow:
+    0 1px 0 rgba(14, 8, 13, 0.85),
+    0 8px 28px rgba(14, 8, 13, 0.75);
 }
 
 .finale-write__rule {
@@ -466,20 +474,21 @@ html.gallery-complete .gallery-hud .hand {
   margin: 0 auto 2.6vh;
   background: linear-gradient(90deg, transparent, var(--rose-mid), transparent);
   transform: scaleX(0);
-  opacity: 0.7;
+  opacity: 0.85;
   transform-origin: center;
 }
 
 .finale-write__sub,
 .finale-write__closing,
 .finale-write__sig {
-  margin: 0.35em 0;
+  margin: 0.4em 0;
   font-family: var(--font-body);
-  font-size: clamp(1.05rem, 2.05vw, 1.7rem);
+  font-size: clamp(1.1rem, 2.15vw, 1.75rem);
   font-style: italic;
-  font-weight: 300;
-  letter-spacing: 0.01em;
-  line-height: 1.35;
+  font-weight: 400;
+  letter-spacing: 0.015em;
+  line-height: 1.4;
+  color: #f6e8ec;
 }
 
 .finale-write__sub span,
@@ -490,19 +499,19 @@ html.gallery-complete .gallery-hud .hand {
 }
 
 .finale-write__closing {
-  font-size: clamp(0.95rem, 1.45vw, 1.2rem);
+  font-size: clamp(1rem, 1.55vw, 1.25rem);
   font-style: normal;
   letter-spacing: 0.06em;
-  opacity: 0.86;
+  opacity: 0.95;
 }
 
 .finale-write__sig {
   margin-top: 1.6em;
-  font-size: clamp(0.7rem, 0.95vw, 0.85rem);
+  font-size: clamp(0.75rem, 1vw, 0.9rem);
   letter-spacing: 0.38em;
   text-transform: uppercase;
   font-style: normal;
-  color: var(--rose-mid);
+  color: #f0c4ce;
 }
 
 .finale__subline {

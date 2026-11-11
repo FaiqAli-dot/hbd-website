@@ -53,8 +53,8 @@ async function runDesktop() {
     const key = gestures[i]
     const dir = dirs[i]
     await page.keyboard.press(key)
-    // Mid-flight (~45% of memoryGlide)
-    await page.waitForTimeout(i === 0 ? 1100 : 950)
+    // Mid-flight ~62% of glide — past anticipation, still clearly travelling
+    await page.waitForTimeout(i === 0 ? 1750 : 1500)
     if (!seenDirs.has(dir)) {
       await shot(page, `cine-ch1-midflight-${dir}`)
       seenDirs.add(dir)
@@ -72,10 +72,13 @@ async function runDesktop() {
   await cont.click({ force: true })
   await page.waitForTimeout(1600)
   await shot(page, 'cine-ch1-pullout-mid')
-  await page.waitForTimeout(2800)
-  // Collage holds ~1.6s after pull-out before auto-scroll into the letter
+  // Wait until collage has settled (gallery-complete), then hold frame
+  await page.waitForFunction(() => document.body.classList.contains('gallery-complete'), null, {
+    timeout: 8000,
+  })
+  await page.waitForTimeout(700)
   await shot(page, 'cine-ch1-collage')
-  await page.waitForTimeout(2000)
+  await page.waitForTimeout(1600)
 
   const panelY = async (id) =>
     page.evaluate((sel) => {
@@ -180,52 +183,24 @@ async function runMobileVideo() {
   await page.goto(BASE, { waitUntil: 'networkidle' })
   await page.waitForTimeout(800)
 
-  const swipe = async (dir) => {
-    const box = { x: 195, y: 400 }
-    const dist = 120
-    const map = {
-      left: { x: box.x + dist, y: box.y, x2: box.x - dist, y2: box.y },
-      right: { x: box.x - dist, y: box.y, x2: box.x + dist, y2: box.y },
-      up: { x: box.x, y: box.y + dist, x2: box.x, y2: box.y - dist },
-      down: { x: box.x, y: box.y - dist, x2: box.x, y2: box.y + dist },
-    }
-    const m = map[dir]
-    const client = await page.context().newCDPSession(page)
-    await client.send('Input.dispatchTouchEvent', {
-      type: 'touchStart',
-      touchPoints: [{ x: m.x, y: m.y }],
-    })
-    await page.waitForTimeout(30)
-    await client.send('Input.dispatchTouchEvent', {
-      type: 'touchMove',
-      touchPoints: [{ x: (m.x + m.x2) / 2, y: (m.y + m.y2) / 2 }],
-    })
-    await page.waitForTimeout(30)
-    await client.send('Input.dispatchTouchEvent', {
-      type: 'touchMove',
-      touchPoints: [{ x: m.x2, y: m.y2 }],
-    })
-    await client.send('Input.dispatchTouchEvent', {
-      type: 'touchEnd',
-      touchPoints: [],
-    })
-  }
-
-  for (let i = 0; i < dirs.length; i++) {
-    await swipe(dirs[i])
-    await page.waitForTimeout(1100)
+  // Keyboard drives the same Experience handlers as desktop (touch CDP is flaky in headless)
+  await page.locator('canvas.webgl-canvas').click({ force: true }).catch(() => undefined)
+  for (let i = 0; i < gestures.length; i++) {
+    await page.keyboard.press(gestures[i])
+    await page.waitForTimeout(1200)
     if (i < 4) await shot(page, `cine-mobile-midflight-${dirs[i]}`)
-    await page.waitForTimeout(1600)
+    await page.waitForTimeout(i === 0 ? 2400 : 2200)
   }
   await shot(page, 'cine-mobile-awaiting-pullout')
 
-  // Swipe up for pull-out
-  await swipe('up')
-  await page.waitForTimeout(4500)
+  const contEarly = page.locator('[data-continue]')
+  await contEarly.first().click({ force: true })
+  await page.waitForFunction(() => document.body.classList.contains('gallery-complete'), null, {
+    timeout: 12000,
+  })
+  await page.waitForTimeout(800)
   await shot(page, 'cine-mobile-collage')
 
-  const cont = page.locator('[data-continue]')
-  if (await cont.count()) await cont.first().click({ force: true }).catch(() => undefined)
   await page.waitForTimeout(500)
   const heights = await page.evaluate(() => document.documentElement.scrollHeight)
   for (const frac of [0.15, 0.3, 0.5, 0.7, 0.9]) {

@@ -224,33 +224,48 @@ export class MemoriesWorld {
       tl.to(p.material.uniforms.uBoost, { value: 0.55, duration: 0.2 }, i * 0.05)
       tl.to(
         p.group.scale,
-        { x: 1.2, y: 1.2, z: 1.2, duration: 0.3, ease: 'power2.out' },
+        { x: 1.15, y: 1.15, z: 1.15, duration: 0.28, ease: 'power2.out' },
         i * 0.05,
       )
-      // Drift toward finale (more negative local z within memories group)
+      // Drift toward finale while shattering into particles
       tl.to(
         p.group.position,
         {
           z: p.rest.z - 14,
           x: p.rest.x * 0.35,
           y: p.rest.y * 0.35,
-          duration: 1.5,
+          duration: 1.35,
           ease: 'power2.in',
         },
-        0.15 + i * 0.05,
+        0.12 + i * 0.05,
       )
       tl.to(
         p.group.scale,
-        { x: 0.04, y: 0.04, z: 0.04, duration: 1.45, ease: 'power3.in' },
-        0.25 + i * 0.05,
+        { x: 0.02, y: 0.02, z: 0.02, duration: 1.25, ease: 'power3.in' },
+        0.2 + i * 0.05,
       )
       tl.to(
         p.material.uniforms.uOpacity,
-        { value: 0, duration: 1.1, ease: 'power2.in' },
-        0.55 + i * 0.05,
+        { value: 0, duration: 0.95, ease: 'power2.in' },
+        0.45 + i * 0.05,
       )
-      tl.add(() => this.pause(p), 0.35 + i * 0.05)
+      // Fade every child (rings/halos) so nothing remains on the finale
+      p.group.children.forEach((child) => {
+        if (child instanceof THREE.Mesh && child !== p.mesh) {
+          const mat = child.material as THREE.MeshBasicMaterial
+          if (mat?.opacity != null) {
+            tl.to(mat, { opacity: 0, duration: 0.4, ease: 'power2.in' }, 0.2 + i * 0.05)
+          }
+        }
+      })
+      tl.add(() => {
+        this.pause(p)
+        p.group.visible = false
+      }, 1.2 + i * 0.05)
     })
+    tl.add(() => {
+      this.group.visible = false
+    }, 1.6)
     return tl
   }
 
