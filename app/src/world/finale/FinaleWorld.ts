@@ -23,6 +23,10 @@ interface StrokeRuntime {
   L: number
   obj: { p: number }
   el: SVGPathElement
+  /** Parent clip wrapper — also hard-hidden until this stroke's turn */
+  wrap: SVGGElement | null
+  /** Optional thin nib-trail ribbon synced to the same dash progress */
+  tip: SVGPathElement | null
   t0: number
   t1: number
 }
@@ -48,6 +52,8 @@ export class FinaleWorld {
   private morphing = false
   private writing = false
   private writeStartedAt = 0
+  /** When set, stepWriting stays locked to this ms (stills / seek verification). */
+  private pinnedMs: number | null = null
   private lastNib: [number, number] | null = null
   private lastStepWall = 0
   private nibObj = { x: 0, y: 0, lift: 1, w: 0 }
@@ -273,8 +279,16 @@ export class FinaleWorld {
     // Show full ink + message immediately
     this.strokes.forEach((s) => {
       s.obj.p = 1
-      s.mp.style.strokeDashoffset = '0'
+      s.mp.setAttribute('stroke-dashoffset', '0')
+      s.el.setAttribute('visibility', 'visible')
+      s.el.setAttribute('display', 'inline')
+      s.el.setAttribute('stroke-opacity', '1')
+      s.el.setAttribute('opacity', '1')
+      s.wrap?.setAttribute('display', 'inline')
+      s.tip?.setAttribute('stroke-dashoffset', '0')
+      s.tip?.setAttribute('display', 'inline')
     })
+    this.floodAllGlyphs()
     this.spans.forEach((sp) => {
       sp.style.opacity = '1'
       sp.style.filter = 'none'
@@ -283,11 +297,13 @@ export class FinaleWorld {
     const rule = document.querySelector('[data-finale-rule]') as HTMLElement | null
     if (rule) rule.style.transform = 'scaleX(1)'
     this.writing = false
+    this.pinnedMs = null
   }
 
   private mountAndWrite(): void {
     this.mountSvgDom()
     this.buildTimeline()
+    this.pinnedMs = null
     this.writing = true
     this.writeStartedAt = performance.now()
     this.lastStepWall = this.writeStartedAt
@@ -380,13 +396,31 @@ export class FinaleWorld {
     this.glyphsFlooded = false
     this.glyphStrokeIndex = []
 
-    // Clip each pen stroke to its glyph outline so thick/thin follows the typeface,
-    // but ink can only appear along the nib path (dash reveal) — never ahead.
+    // Clip each pen stroke to (glyph outline ∩ advance-width band) so overhangs
+    // from neighbouring letters cannot paint ahead of the nib.
+    const glyphMeta = (STROKES as { glyphMeta?: Array<{ x0: number; x1: number }> }).glyphMeta
     if (hasGlyphs) {
       glyphOutlines!.forEach((d, gi) => {
+        const meta = glyphMeta?.[gi]
+        const x0 = (meta?.x0 ?? 0) - 2
+        const x1 = (meta?.x1 ?? 0) + 2
+        // Band clip: kill outline overhang into the next letter
+        const band = document.createElementNS(NS, 'clipPath')
+        band.id = `fband${gi}`
+        band.setAttribute('clipPathUnits', 'userSpaceOnUse')
+        const rect = document.createElementNS(NS, 'rect')
+        rect.setAttribute('x', String(x0))
+        rect.setAttribute('y', '-200')
+        rect.setAttribute('width', String(Math.max(4, x1 - x0)))
+        rect.setAttribute('height', '600')
+        band.appendChild(rect)
+        defs.appendChild(band)
+
         const cp = document.createElementNS(NS, 'clipPath')
         cp.id = `fclip${gi}`
         cp.setAttribute('clipPathUnits', 'userSpaceOnUse')
+        // Nest outline clip inside band via a clipped group referenced... SVG can't nest easily,
+        // so use outline path alone here; band applied on a wrapper group below.
         const cpath = document.createElementNS(NS, 'path')
         cpath.setAttribute('d', d)
         cpath.setAttribute('fill-rule', 'nonzero')
@@ -425,42 +459,130 @@ export class FinaleWorld {
         el.setAttribute('fill', 'url(#inkG)')
         el.setAttribute('mask', `url(#fm${i})`)
         strokeLayer[s.word].appendChild(el)
-        const L = mp.getTotalLength()
-        mp.style.strokeDasharray = `${L} ${L + 10}`
-        mp.style.strokeDashoffset = String(L)
-        return { ...s, mp, L, obj: { p: 0 }, el, t0: 0, t1: 0 }
+        const L = Math.max(0.001, mp.getTotalLength())
+        // Presentation attributes — more reliable than CSS for dash hide
+        mp.setAttribute('stroke-dasharray', `${L} ${L + 10}`)
+        mp.setAttribute('stroke-dashoffset', String(L))
+        el.setAttribute('visibility', 'hidden')
+        el.setAttribute('display', 'none')
+        el.setAttribute('opacity', '0')
+        return { ...s, mp, L, obj: { p: 0 }, el, wrap: null, tip: null, t0: 0, t1: 0 }
       }
 
-      // Pen ribbon: dash-drawn centerline, clipped to glyph outline
-      const el = document.createElementNS(NS, 'path')
-      el.setAttribute('d', s.center)
-      el.setAttribute('fill', 'none')
-      el.setAttribute('stroke', 'url(#inkG)')
-      const sw = Math.max(s.wmax * 0.92, 2.8)
-      el.setAttribute('stroke-width', sw.toFixed(2))
-      el.setAttribute('stroke-linecap', 'round')
-      el.setAttribute('stroke-linejoin', 'round')
-      if (hasGlyphs && gi >= 0) el.setAttribute('clip-path', `url(#fclip${gi})`)
-      strokeLayer[s.word].appendChild(el)
+      // Ink letters: reveal the TRUE glyph fill through a dash mask along the
+      // writing centerline — letter-complete shapes, nothing painted until this stroke's turn.
+      // Detail strokes (t-cross / i-dot): thin visible ribbon only.
+      const isDetail = s.kind === 'detail'
+      const outlineD =
+        hasGlyphs && gi >= 0 && !isDetail ? glyphOutlines![gi] : ''
 
-      const L = el.getTotalLength()
-      el.style.strokeDasharray = `${L} ${L + 10}`
-      el.style.strokeDashoffset = String(L)
-      return { ...s, mp: el, L, obj: { p: 0 }, el, t0: 0, t1: 0 }
+      const mp = document.createElementNS(NS, 'path')
+      mp.setAttribute('d', s.center)
+      mp.setAttribute('fill', 'none')
+      mp.setAttribute('stroke', '#fff')
+      mp.setAttribute('stroke-linecap', 'round')
+      mp.setAttribute('stroke-linejoin', 'round')
+      // Thick mask stroke so the skeleton covers the glyph body as it writes
+      const maskW = isDetail
+        ? Math.max(s.wmax * 1.1, 3.2)
+        : Math.max(s.wmax * 3.4, 14)
+      mp.setAttribute('stroke-width', maskW.toFixed(2))
+
+      let el: SVGPathElement
+      let wrap: SVGGElement | null = null
+
+      if (outlineD) {
+        const m = document.createElementNS(NS, 'mask')
+        m.id = `fm${i}`
+        m.setAttribute('maskUnits', 'userSpaceOnUse')
+        m.setAttribute('x', '-1000')
+        m.setAttribute('y', '-1000')
+        m.setAttribute('width', '4000')
+        m.setAttribute('height', '4000')
+        // Black backdrop so unrevealed areas stay fully hidden
+        const bg = document.createElementNS(NS, 'rect')
+        bg.setAttribute('x', '-1000')
+        bg.setAttribute('y', '-1000')
+        bg.setAttribute('width', '4000')
+        bg.setAttribute('height', '4000')
+        bg.setAttribute('fill', '#000')
+        m.appendChild(bg)
+        m.appendChild(mp)
+        defs.appendChild(m)
+
+        el = document.createElementNS(NS, 'path')
+        el.setAttribute('d', outlineD)
+        el.setAttribute('fill', 'url(#inkG)')
+        el.setAttribute('fill-rule', 'nonzero')
+        el.setAttribute('mask', `url(#fm${i})`)
+      } else {
+        // Detail ribbon (or missing outline): visible stroked centerline
+        el = mp
+        el.setAttribute('stroke', 'url(#inkG)')
+        el.setAttribute(
+          'stroke-width',
+          Math.max(s.wmax * 0.95, isDetail ? 2.4 : 3.2).toFixed(2),
+        )
+        if (hasGlyphs && gi >= 0) el.setAttribute('clip-path', `url(#fclip${gi})`)
+      }
+
+      el.setAttribute('visibility', 'hidden')
+      el.setAttribute('display', 'none')
+      el.setAttribute('opacity', '0')
+
+      if (hasGlyphs && gi >= 0) {
+        wrap = document.createElementNS(NS, 'g')
+        wrap.setAttribute('clip-path', `url(#fband${gi})`)
+        wrap.setAttribute('display', 'none')
+        wrap.appendChild(el)
+        // Nib-trail ribbon on top of masked fill (ink only) — thin, same dash progress
+        if (outlineD) {
+          const tip = document.createElementNS(NS, 'path')
+          tip.setAttribute('d', s.center)
+          tip.setAttribute('fill', 'none')
+          tip.setAttribute('stroke', 'url(#inkG)')
+          tip.setAttribute('stroke-width', Math.max(s.wmax * 0.55, 2.2).toFixed(2))
+          tip.setAttribute('stroke-linecap', 'round')
+          tip.setAttribute('stroke-linejoin', 'round')
+          tip.setAttribute('clip-path', `url(#fclip${gi})`)
+          tip.setAttribute('pointer-events', 'none')
+          tip.setAttribute('data-nib-trail', String(i))
+          wrap.appendChild(tip)
+        }
+        strokeLayer[s.word].appendChild(wrap)
+      } else {
+        strokeLayer[s.word].appendChild(el)
+      }
+
+      const L = Math.max(0.001, mp.getTotalLength())
+      mp.setAttribute('stroke-dasharray', `${L} ${L + 10}`)
+      mp.setAttribute('stroke-dashoffset', String(L))
+      // Sync tip trail dash with mask
+      const tip = wrap?.querySelector('[data-nib-trail]') as SVGPathElement | null
+      if (tip) {
+        tip.setAttribute('stroke-dasharray', `${L} ${L + 10}`)
+        tip.setAttribute('stroke-dashoffset', String(L))
+      }
+      return { ...s, mp, L, obj: { p: 0 }, el, wrap, tip, t0: 0, t1: 0 }
     })
 
-    // Glyph fills sit above strokes but stay invisible until final flood
+    // Glyph fills — solid letter after that glyph's ink stroke completes.
+    // Clipped to advance band so flourishes cannot paint into the next letter early.
     if (hasGlyphs) {
       glyphOutlines!.forEach((d, gi) => {
         const meta = (STROKES as { glyphMeta?: Array<{ word: number }> }).glyphMeta?.[gi]
         const word = meta?.word ?? 0
+        const wrap = document.createElementNS(NS, 'g')
+        wrap.setAttribute('clip-path', `url(#fband${gi})`)
         const p = document.createElementNS(NS, 'path')
         p.setAttribute('d', d)
         p.setAttribute('fill', 'url(#inkG)')
         p.setAttribute('fill-rule', 'nonzero')
         p.setAttribute('opacity', '0')
+        p.setAttribute('display', 'none')
         p.setAttribute('data-glyph-fill', String(gi))
-        this.wordGroups[word].appendChild(p)
+        wrap.appendChild(p)
+        this.wordGroups[word].appendChild(wrap)
         this.glyphFills[gi] = p
       })
     }
@@ -621,22 +743,28 @@ export class FinaleWorld {
     if (this.glyphsFlooded) return
     this.glyphsFlooded = true
     for (const fill of this.glyphFills) {
-      if (fill) fill.setAttribute('opacity', '1')
+      if (!fill) continue
+      fill.setAttribute('display', 'inline')
+      fill.setAttribute('opacity', '1')
     }
   }
 
   private clearGlyphFlood(): void {
     this.glyphsFlooded = false
     for (const fill of this.glyphFills) {
-      if (fill) fill.setAttribute('opacity', '0')
+      if (!fill) continue
+      fill.setAttribute('opacity', '0')
+      fill.setAttribute('display', 'none')
     }
   }
 
   private stepWriting(_frameDt: number): void {
     if (!this.tl || !this.writing) return
     // Drive from wall clock so low headless FPS cannot crawl the handwriting.
+    // pinnedMs locks stills to an exact seek time (no post-seek drift).
     const now = performance.now()
-    const ms = Math.max(0, now - this.writeStartedAt)
+    const ms =
+      this.pinnedMs != null ? this.pinnedMs : Math.max(0, now - this.writeStartedAt)
     const dt = Math.min(0.05, Math.max(0.001, (now - this.lastStepWall) / 1000))
     this.lastStepWall = now
     this.tl.seek(ms)
@@ -649,16 +777,62 @@ export class FinaleWorld {
       let p = s.obj.p
       if (ms < s.t0) p = 0
       else if (ms >= s.t1) p = 1
+      else if (!(p > 0 && p < 1)) {
+        p = utils.clamp((ms - s.t0) / Math.max(1, s.t1 - s.t0), 0, 1)
+      }
       s.obj.p = p
-      s.mp.style.strokeDashoffset = (s.L * (1 - p)).toFixed(2)
-      if (p > 0 && p < 1) active = s
+      const hidden = ms < s.t0 || p <= 0.0005
+      // display:none on path + wrap — round linecaps / dash crumbs must not paint early
+      s.el.setAttribute('display', hidden ? 'none' : 'inline')
+      s.el.setAttribute('visibility', hidden ? 'hidden' : 'visible')
+      s.el.setAttribute('stroke-opacity', hidden ? '0' : '1')
+      s.el.setAttribute('opacity', hidden ? '0' : '1')
+      s.wrap?.setAttribute('display', hidden ? 'none' : 'inline')
+      const dash = (s.L * (1 - p)).toFixed(2)
+      s.mp.setAttribute('stroke-dashoffset', dash)
+      s.tip?.setAttribute('stroke-dashoffset', dash)
+      s.tip?.setAttribute('display', hidden ? 'none' : 'inline')
+      if (!hidden && p > 0 && p < 1) active = s
+
+      // Once a letter's ink stroke finishes, show the solid glyph fill so the
+      // letter reads complete before the next one starts (no hollow 'a').
+      const gi = this.glyphStrokeIndex[i] ?? -1
+      if (gi >= 0 && s.kind === 'ink' && p >= 1) {
+        const fill = this.glyphFills[gi]
+        if (fill && fill.getAttribute('display') === 'none') {
+          fill.setAttribute('display', 'inline')
+          fill.setAttribute('opacity', '1')
+        }
+      }
     }
 
     // Final flood only after the last stroke completes — never mid-phrase
     if (ms >= (this.marks.inkDone ?? 1e12) - 16) {
       this.floodAllGlyphs()
     } else if (this.glyphsFlooded) {
-      this.clearGlyphFlood()
+      // Seeking backward: clear global flood flag but keep per-letter fills for completed ink
+      this.glyphsFlooded = false
+    }
+
+    // Sync solid fills: completed letters only (or everything after final flood)
+    {
+      const doneGlyphs = new Set<number>()
+      for (let i = 0; i < this.strokes.length; i++) {
+        const s = this.strokes[i]
+        const gi = this.glyphStrokeIndex[i] ?? -1
+        if (gi >= 0 && s.kind === 'ink' && s.obj.p >= 1) doneGlyphs.add(gi)
+      }
+      for (let gi = 0; gi < this.glyphFills.length; gi++) {
+        const fill = this.glyphFills[gi]
+        if (!fill) continue
+        if (doneGlyphs.has(gi) || this.glyphsFlooded) {
+          fill.setAttribute('display', 'inline')
+          fill.setAttribute('opacity', '1')
+        } else {
+          fill.setAttribute('display', 'none')
+          fill.setAttribute('opacity', '0')
+        }
+      }
     }
 
     let nx: number
@@ -709,9 +883,9 @@ export class FinaleWorld {
       const vx = (sx - this.lastNib[0]) / Math.max(dt, 1e-3)
       const vy = (sy - this.lastNib[1]) / Math.max(dt, 1e-3)
       const spd = Math.hypot(vx, vy)
-      const n = Math.min(3, 1 + Math.floor(spd / 400))
-      this.emit(sx, sy, vx, vy, n, false)
-      if (this.rnd() < 0.08) this.emit(sx, sy, vx, vy, 1, true)
+      const n = Math.min(2, 1 + Math.floor(spd / 500))
+      // Keep trails local — no strong rightward throw that reads as ink ahead
+      this.emit(sx, sy, vx * 0.15, vy * 0.15, n, false)
     }
     this.lastNib = [sx, sy]
 
@@ -726,11 +900,14 @@ export class FinaleWorld {
       const k = this.age[i] / this.life[i]
       const cx = Math.sin(pos[i * 3 + 1] * 2 + this.age[i] * 1.3) * 0.01
       this.vel[i * 2] += cx * dt
-      this.vel[i * 2] *= 0.98
-      this.vel[i * 2 + 1] = this.vel[i * 2 + 1] * 0.98 - 0.008 * dt
+      this.vel[i * 2] *= 0.92
+      this.vel[i * 2 + 1] = this.vel[i * 2 + 1] * 0.92 - 0.008 * dt
       pos[i * 3] += this.vel[i * 2]
       pos[i * 3 + 1] += this.vel[i * 2 + 1]
-      alp.setX(i, Math.pow(1 - k, 1.6) * Math.min(1, this.age[i] * 6) * 0.28)
+      // Kill any trail particle that drifts ahead of the nib (same world space as emit)
+      const nibLx = ((sx / window.innerWidth) * 2 - 1) * 4.5
+      const ahead = writing && pos[i * 3] > nibLx + 0.12
+      alp.setX(i, ahead ? 0 : Math.pow(1 - k, 1.6) * Math.min(1, this.age[i] * 6) * 0.22)
     }
 
     // After ink is done, keep trails extremely sparse — no glowing disc buildup
@@ -759,10 +936,27 @@ export class FinaleWorld {
       ? Math.max(0, Math.min(end, msOrFrac * end))
       : Math.max(0, Math.min(end, msOrFrac))
     this.clearGlyphFlood()
+    // Clear particle trails so seek stills never show leftover sparkles ahead of the nib
+    const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
+    for (let i = 0; i < this.count; i++) {
+      this.age[i] = this.life[i] + 1
+      alp.setX(i, 0)
+    }
+    alp.needsUpdate = true
+    this.lastNib = null
     this.writeStartedAt = performance.now() - ms
     this.lastStepWall = performance.now()
+    this.pinnedMs = ms
     this.writing = true
     this.stepWriting(0.008)
+  }
+
+  /** Resume live writing after a pinned seek (used by the short demo recording). */
+  unpinSeek(): void {
+    if (this.pinnedMs == null) return
+    this.writeStartedAt = performance.now() - this.pinnedMs
+    this.lastStepWall = performance.now()
+    this.pinnedMs = null
   }
 
   seekFraction(frac: number): void {
@@ -772,6 +966,19 @@ export class FinaleWorld {
   /** Capture/debug hooks */
   getMarks(): Record<string, number> {
     return { ...this.marks }
+  }
+
+  /** Hide particle layer (for stills) — trails can read as ink ahead of the nib */
+  setParticlesVisible(on: boolean): void {
+    this.points.visible = on
+    if (!on) {
+      const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
+      for (let i = 0; i < this.count; i++) {
+        this.age[i] = this.life[i] + 1
+        alp.setX(i, 0)
+      }
+      alp.needsUpdate = true
+    }
   }
 
   getNibDebug(): { x: number; y: number; word: number; flooded: boolean; ms: number } {

@@ -184,7 +184,7 @@ def main():
     sx = (dmaxx - dminx) / max(1.0, (rmaxx - rminx))
     sy = (dmaxy - dminy) / max(1.0, (rmaxy - rminy))
     # Use uniform scale to preserve proportions
-    s = (sx + sy) / 2
+    scl = (sx + sy) / 2
 
     def rast_to_des(pts):
         # raster y down; design y from glyph is already flipped (y up visually in SVG = smaller y at top)
@@ -192,8 +192,8 @@ def main():
         # So both y-down. Map:
         return [
             (
-                (x - rminx) * s + dminx,
-                (y - rminy) * s + dminy,
+                (x - rminx) * scl + dminx,
+                (y - rminy) * scl + dminy,
             )
             for x, y in pts
         ]
@@ -385,7 +385,7 @@ def main():
         for x, y in pts_img[::3]:
             iy = max(0, min(H - 1, int(round(y))))
             ix = max(0, min(W - 1, int(round(x))))
-            vals.append(float(dist[iy, ix]) * s * 2)
+            vals.append(float(dist[iy, ix]) * scl * 2)
         return max(3.2, min(10.0, max(vals) if vals else 5.0))
 
     # Per-glyph outlines + meta (non-space chars only)
@@ -413,152 +413,231 @@ def main():
                 best_d, best_i = d, i
         return best_i
 
-    strokes = []
-    for p in mains + details:
-        kind = "detail" if is_detail(p) else "ink"
-        pts_img = resample(smooth(p, 1), 1.35)
-        pts = rast_to_des(pts_img)
-        # Majority-vote glyph from sample points (connected script spans neighbors)
-        votes: dict[int, int] = {}
-        for q in pts[:: max(1, len(pts) // 12)]:
-            gi = glyph_index_for_x(q[0])
-            votes[gi] = votes.get(gi, 0) + 1
-        gi = max(votes, key=votes.get) if votes else glyph_index_for_x(pts[0][0])
-        word = glyph_meta[gi]["word"]
-        strokes.append(
-            {
-                "word": word,
-                "kind": kind,
-                "center": pathd(pts),
-                "outline": "",
-                "len": round(length(pts), 2),
-                "start": [round(pts[0][0], 2), round(pts[0][1], 2)],
-                "end": [round(pts[-1][0], 2), round(pts[-1][1], 2)],
-                "wmax": round(wmax_for(pts_img), 2),
-                "glyph": gi,
-            }
-        )
-    strokes = [s for s in strokes if not (s["kind"] == "ink" and s["len"] < 18)]
-    # Deduplicate
-    kept = []
-    for s in strokes:
-        dup = False
-        for k in kept:
-            if s["kind"] != k["kind"] or s["word"] != k["word"] or s.get("glyph") != k.get("glyph"):
-                continue
-            if abs(s["len"] - k["len"]) < 2.5 and abs(s["start"][0] - k["start"][0]) < 4:
-                dup = True
-                break
-        if not dup:
-            kept.append(s)
-    strokes = kept
+    MIN_LEN = 8.0  # drop tiny skeleton stubs (design units)
 
-    # Synthesize centerlines for glyphs the global skeleton missed (e.g. short 'r')
-    covered = {s["glyph"] for s in strokes if s.get("glyph", -1) >= 0}
-    for gi, g in enumerate(glyph_meta):
-        if gi in covered:
-            continue
-        # Rasterize this glyph alone in the shared PIL frame and skeletonize
-        ch = g["ch"]
-        solo = Image.new("L", (W, H), 0)
-        # Place glyph at same phrase origin so rast_to_des stays valid
-        ImageDraw.Draw(solo).text((pad - bb[0], pad - bb[1]), TEXT, font=font_pil, fill=255)
-        solo_m = np.array(solo) > 128
-        # Restrict to glyph x band in design → raster
-        x0d, x1d = g["x0"] - 2, g["x1"] + 2
-        # Invert rast_to_des for x band
-        rx0 = int(round((x0d - dminx) / s + rminx))
-        rx1 = int(round((x1d - dminx) / s + rminx))
-        rx0 = max(0, min(W - 1, rx0))
-        rx1 = max(0, min(W, rx1))
-        band = np.zeros_like(solo_m)
-        band[:, rx0:rx1] = solo_m[:, rx0:rx1]
-        if band.sum() < 20:
-            # Fallback: short diagonal through glyph box mid
-            ymid = 0.55 * (dminy + dmaxy)
-            pts = [
-                (g["x0"] + 1.5, ymid + 8),
-                (0.5 * (g["x0"] + g["x1"]), ymid - 6),
-                (g["x1"] - 1.5, ymid + 4),
-            ]
-            strokes.append(
-                {
-                    "word": g["word"],
-                    "kind": "ink",
-                    "center": pathd(pts),
-                    "outline": "",
-                    "len": round(length(pts), 2),
-                    "start": [round(pts[0][0], 2), round(pts[0][1], 2)],
-                    "end": [round(pts[-1][0], 2), round(pts[-1][1], 2)],
-                    "wmax": 5.2,
-                    "glyph": gi,
-                }
-            )
-            continue
-        band = ndimage.binary_closing(band, iterations=1)
-        sk = prune_spurs(skeletonize(band), max_spur=12)
+    def split_by_glyph(pts_des):
+        """Split a polyline into contiguous runs belonging to one glyph each."""
+        if not pts_des:
+            return []
+        runs = []
+        cur_gi = glyph_index_for_x(pts_des[0][0])
+        buf = [pts_des[0]]
+        for q in pts_des[1:]:
+            gi = glyph_index_for_x(q[0])
+            if gi != cur_gi:
+                if len(buf) >= 2:
+                    runs.append((cur_gi, buf))
+                cur_gi = gi
+                buf = [q]
+            else:
+                buf.append(q)
+        if len(buf) >= 2:
+            runs.append((cur_gi, buf))
+        return runs
+
+    def trim_pts_to_glyph(gi: int, pts):
+        """Drop samples outside the glyph advance band — never clamp (clamp makes vertical stubs)."""
+        g = glyph_meta[gi]
+        lo, hi = g["x0"] - 2.5, g["x1"] + 2.5
+        out = [(x, y) for x, y in pts if lo <= x <= hi]
+        if len(out) >= 2:
+            return out
+        # If the whole run sat just outside (script overhang), keep original but nudge into band
+        if not pts:
+            return pts
+        mid = 0.5 * (g["x0"] + g["x1"])
+        return [(mid + (x - pts[len(pts) // 2][0]) * 0.15, y) for x, y in pts]
+
+    def make_stroke(gi: int, pts, kind: str, pts_img=None):
+        word = glyph_meta[gi]["word"]
+        pts = trim_pts_to_glyph(gi, pts)
+        if length(pts) < MIN_LEN:
+            return None
+        wmax = round(wmax_for(pts_img), 2) if pts_img is not None else 5.2
+        return {
+            "word": word,
+            "kind": kind,
+            "center": pathd(pts),
+            "outline": "",
+            "len": round(length(pts), 2),
+            "start": [round(pts[0][0], 2), round(pts[0][1], 2)],
+            "end": [round(pts[-1][0], 2), round(pts[-1][1], 2)],
+            "wmax": wmax,
+            "glyph": gi,
+        }
+
+    def chains_from_mask(band_mask, max_spur=14):
+        """Skeletonize a binary mask → list of image-space polylines (longest first)."""
+        if band_mask.sum() < 20:
+            return []
+        closed = ndimage.binary_closing(band_mask, iterations=1)
+        sk = prune_spurs(skeletonize(closed), max_spur=max_spur)
         sk_pts = skel_set(sk)
         if len(sk_pts) < 6:
-            ymid = 0.55 * (dminy + dmaxy)
-            pts = [
-                (g["x0"] + 1.5, ymid + 6),
-                (0.5 * (g["x0"] + g["x1"]), ymid - 5),
-                (g["x1"] - 1.5, ymid + 3),
-            ]
-        else:
-            # Trace longest chain in band skeleton
-            sk_deg = {p: len(neigh(sk_pts, p)) for p in sk_pts}
-            seeds_g = [p for p, d in sk_deg.items() if d == 1] or [next(iter(sk_pts))]
-            best_chain = []
-            used_g = set()
-            for start in seeds_g:
-                for nxt in neigh(sk_pts, start):
-                    ek = edge_key(start, nxt)
-                    if ek in used_g:
-                        continue
-                    chain = [start]
-                    prev, cur = start, nxt
-                    used_g.add(ek)
-                    while True:
-                        chain.append(cur)
-                        if cur != start and sk_deg.get(cur, 0) != 2:
-                            break
-                        ns = [n for n in neigh(sk_pts, cur) if n != prev]
-                        n2 = next((n for n in ns if edge_key(cur, n) not in used_g), None)
-                        if n2 is None:
-                            break
-                        used_g.add(edge_key(cur, n2))
-                        prev, cur = cur, n2
-                    if len(chain) > len(best_chain):
-                        best_chain = chain
-            if len(best_chain) < 5:
-                ymid = 0.55 * (dminy + dmaxy)
-                pts = [
-                    (g["x0"] + 1.5, ymid + 6),
-                    (0.5 * (g["x0"] + g["x1"]), ymid - 5),
-                    (g["x1"] - 1.5, ymid + 3),
-                ]
-            else:
-                pts_img = resample(smooth(to_xy(best_chain), 2), 1.5)
-                pts = rast_to_des(pts_img)
-                pts = orient(pts)
-        strokes.append(
-            {
-                "word": g["word"],
-                "kind": "ink",
-                "center": pathd(pts),
-                "outline": "",
-                "len": round(length(pts), 2),
-                "start": [round(pts[0][0], 2), round(pts[0][1], 2)],
-                "end": [round(pts[-1][0], 2), round(pts[-1][1], 2)],
-                "wmax": 5.4,
-                "glyph": gi,
-            }
-        )
-        print(f"synthesized stroke for glyph {gi} '{g['ch']}' len={length(pts):.1f}")
+            return []
+        sk_deg = {p: len(neigh(sk_pts, p)) for p in sk_pts}
+        seeds_g = [p for p, d in sk_deg.items() if d != 2] or [next(iter(sk_pts))]
+        used_g = set()
+        chains = []
+        for start in seeds_g:
+            for nxt in neigh(sk_pts, start):
+                ek = edge_key(start, nxt)
+                if ek in used_g:
+                    continue
+                chain = [start]
+                prev, cur = start, nxt
+                used_g.add(ek)
+                while True:
+                    chain.append(cur)
+                    if cur != start and sk_deg.get(cur, 0) != 2:
+                        break
+                    ns = [n for n in neigh(sk_pts, cur) if n != prev]
+                    n2 = next((n for n in ns if edge_key(cur, n) not in used_g), None)
+                    if n2 is None:
+                        break
+                    used_g.add(edge_key(cur, n2))
+                    prev, cur = cur, n2
+                if len(chain) >= 5:
+                    chains.append(to_xy(chain))
+        # Also walk unused pure loops
+        for p0 in list(sk_pts):
+            for nxt in neigh(sk_pts, p0):
+                ek = edge_key(p0, nxt)
+                if ek in used_g:
+                    continue
+                chain = [p0]
+                prev, cur = p0, nxt
+                used_g.add(ek)
+                guard = 0
+                while guard < 20000:
+                    guard += 1
+                    chain.append(cur)
+                    ns = [n for n in neigh(sk_pts, cur) if n != prev]
+                    n2 = next((n for n in ns if edge_key(cur, n) not in used_g), None)
+                    if n2 is None or cur == p0:
+                        break
+                    used_g.add(edge_key(cur, n2))
+                    prev, cur = cur, n2
+                if len(chain) >= 5:
+                    chains.append(to_xy(chain))
+        chains = [resample(smooth(c, 2), 1.5) for c in chains]
+        chains = [c for c in chains if length(c) >= 5]
+        chains.sort(key=length, reverse=True)
+        return chains
 
-    # Writing order: left-to-right by glyph, ink before details within glyph
-    strokes.sort(key=lambda s: (s["word"], s.get("glyph", 99), 0 if s["kind"] == "ink" else 1, s["start"][0]))
+    def solo_glyph_mask(gi: int):
+        """Raster of a single Great Vibes glyph at its phrase advance — complete letter, no neighbours."""
+        # Map glyph index → character index in TEXT
+        gcount = -1
+        char_i = None
+        for i, ch in enumerate(TEXT):
+            if ch == " ":
+                continue
+            gcount += 1
+            if gcount == gi:
+                char_i = i
+                break
+        if char_i is None:
+            return np.zeros((H, W), dtype=bool)
+        origin = (pad - bb[0], pad - bb[1])
+        solo = Image.new("L", (W, H), 0)
+        x_off = font_pil.getlength(TEXT[:char_i])
+        ImageDraw.Draw(solo).text((origin[0] + x_off, origin[1]), TEXT[char_i], font=font_pil, fill=255)
+        return np.array(solo) > 128
+
+    def lookslike_detail(pts_img, ch: str) -> bool:
+        """i-dots / t-crosses only — everything else merges into the letter stroke or drops."""
+        L = length(pts_img)
+        xs = [q[0] for q in pts_img]
+        ys = [q[1] for q in pts_img]
+        span_x = max(xs) - min(xs)
+        span_y = max(ys) - min(ys)
+        if ch == "i" and L < 40 and span_y < 35 and span_x < 35:
+            return True
+        if ch == "t" and L < 55 and span_x > span_y * 1.2:
+            return True
+        return False
+
+    def merge_polylines(a, b):
+        """Attach b onto a at the nearer end (for stubs that belong to the same letter)."""
+        cands = []
+        for bp in (b, list(reversed(b))):
+            d0 = math.hypot(a[-1][0] - bp[0][0], a[-1][1] - bp[0][1])
+            d1 = math.hypot(a[0][0] - bp[-1][0], a[0][1] - bp[-1][1])
+            cands.append((d0, a + bp[1:]))
+            cands.append((d1, bp + a[1:]))
+        cands.sort(key=lambda t: t[0])
+        return cands[0][1] if cands[0][0] < 55 else None
+
+    # --- One complete letter at a time (solo glyph skeleton) ---
+    # Global phrase skeleton is only a fallback; it fragments 'a' and leaks stubs into later letters.
+    strokes = []
+    for gi, g in enumerate(glyph_meta):
+        band = solo_glyph_mask(gi)
+        # Soft-AND with the phrase ink so we stay inside the composed word silhouette
+        band = band & mask
+        chains = chains_from_mask(band, max_spur=18)
+        if not chains:
+            # Fallback: solo without phrase mask (joining may clip small letters)
+            chains = chains_from_mask(solo_glyph_mask(gi), max_spur=18)
+        ymid = 0.55 * (dminy + dmaxy)
+        fallback = [
+            (g["x0"] + 1.5, ymid + 6),
+            (0.5 * (g["x0"] + g["x1"]), ymid - 5),
+            (g["x1"] - 1.5, ymid + 3),
+        ]
+        if not chains:
+            st = make_stroke(gi, fallback, "ink")
+            if st:
+                strokes.append(st)
+            print(f"fallback stroke for glyph {gi} '{g['ch']}'")
+            continue
+
+        # Classify: longest chain = letter body; tiny chains = detail or merge/drop
+        main = chains[0]
+        details_img = []
+        for extra in chains[1:]:
+            Limg = length(extra)
+            # Drop micro stubs under ~8 design-px (≈ 8/scl raster px)
+            if Limg * scl < MIN_LEN:
+                continue
+            if lookslike_detail(extra, g["ch"]):
+                details_img.append(extra)
+                continue
+            # Merge neighbouring stubs into the letter body so they never draw early/alone
+            merged = merge_polylines(main, extra)
+            if merged is not None:
+                main = merged
+            # else drop — do not emit as its own ink stroke
+        main = orient(main)
+        main = resample(smooth(main, 1), 1.35)
+        pts = rast_to_des(main)
+        st = make_stroke(gi, pts, "ink", main)
+        if st:
+            strokes.append(st)
+            print(f"glyph {gi} '{g['ch']}' ink len={st['len']:.1f} details={len(details_img)}")
+        for dchain in details_img:
+            dchain = orient(dchain)
+            dchain = resample(smooth(dchain, 1), 1.35)
+            if length(dchain) * scl < MIN_LEN and length(rast_to_des(dchain)) < MIN_LEN:
+                continue
+            dpts = rast_to_des(dchain)
+            if length(dpts) < MIN_LEN:
+                continue
+            dst = make_stroke(gi, dpts, "detail", dchain)
+            if dst:
+                strokes.append(dst)
+
+    # Writing order: finish each letter LTR; dots/crosses only after that word's letters
+    ink_strokes = [s for s in strokes if s["kind"] == "ink"]
+    detail_strokes = [s for s in strokes if s["kind"] == "detail"]
+    ink_strokes.sort(key=lambda s: (s["word"], s.get("glyph", 99)))
+    detail_strokes.sort(key=lambda s: (s["word"], s.get("glyph", 99), s["start"][0]))
+    ordered = []
+    for wi in (0, 1):
+        ordered.extend([s for s in ink_strokes if s["word"] == wi])
+        ordered.extend([s for s in detail_strokes if s["word"] == wi])
+    strokes = ordered
 
     # Swash under Birthday
     bday = [s for s in strokes if s["word"] == 1 and s["kind"] == "ink"]

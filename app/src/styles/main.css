@@ -455,7 +455,7 @@ html.gallery-complete .gallery-hud .hand {
   width: min(88vw, 1240px);
   height: auto;
   overflow: visible;
-  filter: drop-shadow(0 0 28px rgba(232, 160, 174, 0.18));
+  /* No drop-shadow: the glow read as ink crumbs ahead of the nib */
 }
 
 .finale-write__msg {
