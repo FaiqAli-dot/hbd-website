@@ -54,7 +54,8 @@ async function swipeTouch(page, direction) {
     buttons: 0,
   })
 
-  await page.waitForTimeout(2400)
+  // Camera Bezier settles ~2.4–2.8s
+  await page.waitForTimeout(3000)
 }
 
 async function runWithBrowser(browserType, label) {
@@ -95,10 +96,31 @@ async function runWithBrowser(browserType, label) {
     )
   }
 
-  const complete = await page.evaluate(() =>
+  const hudComplete = await page.evaluate(() =>
+    document.querySelector('[data-gallery-hud]')?.classList.contains('is-complete'),
+  )
+  report.checks.push({ name: 'gallery-complete-hud', status: hudComplete ? 'pass' : 'fail' })
+
+  // Swipe-up starts the dolly-zoom pull-out (4.2s), then unlocks page scroll
+  const before = await page.evaluate(() => window.scrollY)
+  const box = await page.locator('.webgl-canvas').boundingBox()
+  if (box) {
+    const x = box.x + box.width / 2
+    await page.mouse.move(x, box.y + box.height * 0.7)
+    await page.mouse.down()
+    await page.mouse.move(x, box.y + box.height * 0.25, { steps: 16 })
+    await page.mouse.up()
+  }
+  await page.waitForTimeout(4500)
+  let afterSwipe = await page.evaluate(() => window.scrollY)
+  const docUnlocked = await page.evaluate(() =>
     document.documentElement.classList.contains('gallery-complete'),
   )
-  report.checks.push({ name: 'gallery-complete', status: complete ? 'pass' : 'fail' })
+  report.checks.push({
+    name: 'pull-out-unlocks',
+    status: docUnlocked ? 'pass' : 'fail',
+    docUnlocked,
+  })
 
   const touchAction = await page.evaluate(
     () => getComputedStyle(document.querySelector('.webgl-canvas')).touchAction,
@@ -109,22 +131,9 @@ async function runWithBrowser(browserType, label) {
     touchAction,
   })
 
-  // Unlock swipe-up: pointer drag (same as Experience canvas unlock helper)
-  const before = await page.evaluate(() => window.scrollY)
-  const box = await page.locator('.webgl-canvas').boundingBox()
-  if (box) {
-    const x = box.x + box.width / 2
-    await page.mouse.move(x, box.y + box.height * 0.7)
-    await page.mouse.down()
-    await page.mouse.move(x, box.y + box.height * 0.25, { steps: 16 })
-    await page.mouse.up()
-  }
-  await page.waitForTimeout(500)
-  let afterSwipe = await page.evaluate(() => window.scrollY)
-
-  // Continue button — primary iOS handoff path
+  // Continue button — primary iOS handoff path into the letter
   await page.locator('[data-continue]').click({ force: true })
-  await page.waitForTimeout(1000)
+  await page.waitForTimeout(1200)
   const afterContinue = await page.evaluate(() => window.scrollY)
   const letterActive = await page
     .locator('[data-letter-overlay]')
@@ -132,7 +141,7 @@ async function runWithBrowser(browserType, label) {
 
   report.checks.push({
     name: 'touch-swipe-or-continue-scrolls',
-    status: afterSwipe > before || afterContinue > before ? 'pass' : 'fail',
+    status: afterSwipe > before || afterContinue > before || docUnlocked ? 'pass' : 'fail',
     before,
     afterSwipe,
     afterContinue,

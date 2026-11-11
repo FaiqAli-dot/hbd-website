@@ -11,6 +11,7 @@ export interface OverlayApi {
   root: HTMLElement
   setProgress: (seen: number, total: number) => void
   setHint: (text: string, gestureLabel: string) => void
+  setCaption: (text: string | null) => void
   setGalleryComplete: (complete: boolean) => void
   setChapter: (chapter: 'gallery' | 'letter' | 'memories' | 'finale') => void
   setMemoryLabel: (label: string | null) => void
@@ -39,6 +40,7 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
         <p class="gallery-hud__gesture" data-gesture-label></p>
         <span class="gallery-hud__continue" data-continue-label hidden>${galleryCopy.continueLabel}</span>
       </button>
+      <p class="gallery-hud__caption" data-caption aria-live="polite"></p>
       <div class="gallery-hud__chrome">
         <button type="button" class="gallery__undo" data-undo data-no-gesture disabled>${galleryCopy.undoLabel}</button>
         <div class="gallery__progress" aria-live="polite">
@@ -72,8 +74,18 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     </div>
 
     <div class="finale-overlay" data-finale-overlay aria-hidden="true">
-      <p class="finale__subline">${finaleCopy.subline}</p>
-      <p class="finale__closing">${finaleCopy.closing}</p>
+      <div class="finale-write" data-finale-stage>
+        <svg class="finale-write__svg" id="finale-write-svg" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
+        <div class="finale-write__msg" data-finale-msg>
+          <div class="finale-write__rule" data-finale-rule></div>
+          <p class="finale-write__sub" data-finale-sub></p>
+          <p class="finale-write__closing" data-finale-closing></p>
+          <p class="finale-write__sig" data-finale-sig></p>
+        </div>
+      </div>
+      <!-- Legacy text kept for reduced-motion / accessibility fallbacks -->
+      <p class="finale__subline" hidden>${finaleCopy.subline}</p>
+      <p class="finale__closing" hidden>${finaleCopy.closing}</p>
     </div>
 
     <div class="scroll-space" data-scroll-space aria-hidden="true">
@@ -102,20 +114,34 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     undoCb?.()
   })
 
+  const progressCurrent = root.querySelector('[data-progress-current]') as HTMLElement
+  const progressTotal = root.querySelector('[data-progress-total]') as HTMLElement
+  const hint = root.querySelector('[data-hint]') as HTMLElement
+  const gestureLabel = root.querySelector('[data-gesture-label]') as HTMLElement
+  const captionEl = root.querySelector('[data-caption]') as HTMLElement
+  const handRoot = root.querySelector('.hand') as HTMLElement
+  const galleryHud = root.querySelector('[data-gallery-hud]') as HTMLElement
+  const letterOverlay = root.querySelector('[data-letter-overlay]') as HTMLElement
+  const memoriesOverlay = root.querySelector('[data-memories-overlay]') as HTMLElement
+  const finaleOverlay = root.querySelector('[data-finale-overlay]') as HTMLElement
+  const memoryLabel = root.querySelector('[data-memory-label]') as HTMLElement
+
   const continueBtn = root.querySelector('[data-continue]') as HTMLButtonElement
   const continueLabel = root.querySelector('[data-continue-label]') as HTMLElement
   let continueCb: (() => void) | null = null
   // During gallery, the guide is visual-only (not a button target for gestures).
   continueBtn.disabled = true
   continueBtn.addEventListener('pointerdown', (e) => {
-    if (!document.documentElement.classList.contains('gallery-complete')) {
+    // Enabled once 08/08 is reached (HUD is-complete), even before the
+    // pull-out unlocks page scroll — Continue triggers the dolly-zoom.
+    if (!galleryHud.classList.contains('is-complete')) {
       e.preventDefault()
       return
     }
     e.stopPropagation()
   })
   continueBtn.addEventListener('click', (e) => {
-    if (!document.documentElement.classList.contains('gallery-complete')) {
+    if (!galleryHud.classList.contains('is-complete')) {
       e.preventDefault()
       return
     }
@@ -123,17 +149,6 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     e.stopPropagation()
     continueCb?.()
   })
-
-  const progressCurrent = root.querySelector('[data-progress-current]') as HTMLElement
-  const progressTotal = root.querySelector('[data-progress-total]') as HTMLElement
-  const hint = root.querySelector('[data-hint]') as HTMLElement
-  const gestureLabel = root.querySelector('[data-gesture-label]') as HTMLElement
-  const handRoot = root.querySelector('.hand') as HTMLElement
-  const galleryHud = root.querySelector('[data-gallery-hud]') as HTMLElement
-  const letterOverlay = root.querySelector('[data-letter-overlay]') as HTMLElement
-  const memoriesOverlay = root.querySelector('[data-memories-overlay]') as HTMLElement
-  const finaleOverlay = root.querySelector('[data-finale-overlay]') as HTMLElement
-  const memoryLabel = root.querySelector('[data-memory-label]') as HTMLElement
 
   return {
     root,
@@ -146,6 +161,15 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     setHint: (text, gesture) => {
       hint.textContent = text
       gestureLabel.textContent = gesture
+    },
+    setCaption: (text) => {
+      if (!text) {
+        captionEl.textContent = ''
+        captionEl.classList.remove('is-shown')
+        return
+      }
+      captionEl.textContent = text
+      captionEl.classList.add('is-shown')
     },
     setGalleryComplete: (complete) => {
       galleryHud.classList.toggle('is-complete', complete)

@@ -52,25 +52,36 @@ export class Hand3D {
     glow.position.z = -0.12
     this.group.add(glow)
 
-    this.group.position.set(2.15, -0.55, 2.4)
-    this.group.scale.setScalar(0.85)
+    // Camera-local placement: hand rides with the lens so it stays tasteful
+    // in frame while the ribbon camera travels.
+    this.group.position.set(0.55, -0.42, -1.55)
+    this.group.scale.setScalar(0.28)
+  }
+
+  /** Attach to the active camera so the guide stays in view during travel */
+  attachToCamera(camera: THREE.Object3D): void {
+    camera.add(this.group)
   }
 
   demonstrate(direction: GestureDirection | 'scroll-up'): void {
     this.tween?.kill()
     const reduced = prefersReducedMotion()
     const map: Record<string, { x: number; y: number; rz: number }> = {
-      left: { x: -0.55, y: 0, rz: 0.25 },
-      right: { x: 0.55, y: 0, rz: -0.25 },
-      up: { x: 0, y: 0.55, rz: 0 },
-      down: { x: 0, y: -0.55, rz: 0 },
-      'scroll-up': { x: 0, y: 0.7, rz: 0 },
+      left: { x: -0.18, y: 0, rz: 0.25 },
+      right: { x: 0.18, y: 0, rz: -0.25 },
+      up: { x: 0, y: 0.18, rz: 0 },
+      down: { x: 0, y: -0.18, rz: 0 },
+      'scroll-up': { x: 0, y: 0.22, rz: 0 },
     }
     const pose = map[direction]
-    const base = { x: 2.15, y: direction === 'scroll-up' ? -0.2 : -0.55, z: 2.4 }
+    const base = {
+      x: 0.55,
+      y: direction === 'scroll-up' ? -0.28 : -0.42,
+      z: -1.55,
+    }
 
     this.group.position.set(base.x, base.y, base.z)
-    this.group.rotation.set(0.15, -0.35, 0)
+    this.group.rotation.set(0.12, -0.2, 0)
     this.group.visible = true
 
     if (reduced) return

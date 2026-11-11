@@ -23,9 +23,9 @@ export class Atmosphere {
       uniforms: {
         uTime: { value: 0 },
         uScroll: { value: 0 },
-        uColorA: { value: new THREE.Color('#07060a') },
-        uColorB: { value: new THREE.Color('#1a1218') },
-        uColorC: { value: new THREE.Color('#3a2418') },
+        uColorA: { value: new THREE.Color('#0e080d') },
+        uColorB: { value: new THREE.Color('#1a0e17') },
+        uColorC: { value: new THREE.Color('#2a1522') },
       },
     })
     this.background = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.bgMat)
@@ -75,10 +75,10 @@ export class Atmosphere {
 
   setPalette(chapter: 'gallery' | 'letter' | 'memories' | 'finale'): void {
     const palettes = {
-      gallery: ['#07060a', '#1a1218', '#3a2418'],
-      letter: ['#08070c', '#16141f', '#2a3340'],
-      memories: ['#050508', '#1a1510', '#4a3020'],
-      finale: ['#030208', '#120c18', '#5a3a20'],
+      gallery: ['#0e080d', '#1a0e17', '#2a1522'],
+      letter: ['#0c090e', '#16101a', '#2a1a24'],
+      memories: ['#0a070c', '#151018', '#2a1822'],
+      finale: ['#0e080d', '#1a0e17', '#2a1522'],
     } as const
     const [a, b, c] = palettes[chapter]
     this.bgMat.uniforms.uColorA.value.set(a)
