@@ -196,9 +196,23 @@ export class LetterWorld {
   dissolveForFinale(): gsap.core.Timeline {
     const tl = gsap.timeline()
     this.discs.forEach((mesh, i) => {
-      tl.to(this.mats[i].uniforms.uOpacity, { value: 0, duration: 0.9, ease: 'power2.in' }, i * 0.04)
-      tl.to(mesh.scale, { x: 0.05, y: 0.05, z: 1, duration: 1.0, ease: 'power3.in' }, i * 0.04)
-      tl.to(this.rims[i].material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.6 }, i * 0.04)
+      tl.to(this.mats[i].uniforms.uOpacity, { value: 0, duration: 0.7, ease: 'power2.in' }, i * 0.03)
+      tl.to(mesh.scale, { x: 0.02, y: 0.02, z: 1, duration: 0.85, ease: 'power3.in' }, i * 0.03)
+      tl.to(
+        this.rims[i].material as THREE.MeshBasicMaterial,
+        { opacity: 0, duration: 0.35, ease: 'power2.in' },
+        i * 0.03,
+      )
+    })
+    tl.add(() => {
+      this.discs.forEach((m) => {
+        m.visible = false
+      })
+      this.rims.forEach((r) => {
+        r.visible = false
+        ;(r.material as THREE.MeshBasicMaterial).opacity = 0
+      })
+      this.group.visible = false
     })
     return tl
   }

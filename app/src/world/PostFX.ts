@@ -10,14 +10,16 @@ import {
 } from './shaders'
 import type { QualityTier } from '../utils/quality'
 
-/** Restrained cinematic post — premium, not gaming VFX. */
+/** Restrained cinematic post — premium, never blown-out. */
 export class PostFX {
   readonly composer: EffectComposer
   private bloom: UnrealBloomPass
   private vignette: ShaderPass
   private chroma: ShaderPass
   private readonly baseChroma: number
+  private readonly baseBloom: number
   private useComposer: boolean
+  private bloomMul = 1
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -25,21 +27,21 @@ export class PostFX {
     camera: THREE.Camera,
     tier: QualityTier,
   ) {
-    // Mobile/low: skip bloom+chroma composers; vignette-only or direct render
     this.useComposer = tier !== 'low'
     this.composer = new EffectComposer(renderer)
     this.composer.addPass(new RenderPass(scene, camera))
 
-    const bloomStrength = tier === 'high' ? 0.18 : 0.1
+    // High threshold so only the brightest accents bloom; low strength clamps washout
+    this.baseBloom = tier === 'high' ? 0.12 : 0.07
     this.bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      bloomStrength,
-      0.55,
-      0.9,
+      this.baseBloom,
+      0.4,
+      0.92,
     )
     this.composer.addPass(this.bloom)
 
-    this.baseChroma = tier === 'high' ? 0.00055 : 0.0003
+    this.baseChroma = tier === 'high' ? 0.0004 : 0.00022
     this.chroma = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
@@ -53,9 +55,9 @@ export class PostFX {
     this.vignette = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
-        uIntensity: { value: 0.42 },
+        uIntensity: { value: 0.48 },
         uTime: { value: 0 },
-        uGrain: { value: tier === 'high' ? 0.018 : 0.012 },
+        uGrain: { value: tier === 'high' ? 0.016 : 0.011 },
       },
       vertexShader: vignetteVertex,
       fragmentShader: vignetteGrainFragment,
@@ -63,15 +65,20 @@ export class PostFX {
     this.composer.addPass(this.vignette)
 
     if (!this.useComposer) {
-      this.bloom.strength = 0.06
-      this.chroma.uniforms.uAmount.value = 0.00015
+      this.bloom.strength = 0.04
+      this.chroma.uniforms.uAmount.value = 0.00012
       this.vignette.uniforms.uGrain.value = 0.008
     }
   }
 
   setMotionAmount(amount: number): void {
-    // Very subtle motion pulse only
-    this.chroma.uniforms.uAmount.value = this.baseChroma + Math.min(1, amount) * 0.00045
+    this.chroma.uniforms.uAmount.value = this.baseChroma + Math.min(1, amount) * 0.00035
+  }
+
+  /** 0 = no bloom (finale), 1 = normal chapter bloom */
+  setBloomMul(mul: number): void {
+    this.bloomMul = THREE.MathUtils.clamp(mul, 0, 1)
+    this.bloom.strength = this.baseBloom * this.bloomMul
   }
 
   setSize(w: number, h: number): void {

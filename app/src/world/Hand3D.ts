@@ -39,21 +39,9 @@ export class Hand3D {
     thumb.rotation.y = 0.35
     this.group.add(thumb)
 
-    // Soft glow disc behind hand
-    const glow = new THREE.Mesh(
-      new THREE.CircleGeometry(0.55, 32),
-      new THREE.MeshBasicMaterial({
-        color: '#d4b483',
-        transparent: true,
-        opacity: 0.12,
-        depthWrite: false,
-      }),
-    )
-    glow.position.z = -0.12
-    this.group.add(glow)
-
     // Camera-local placement: hand rides with the lens so it stays tasteful
-    // in frame while the ribbon camera travels.
+    // in frame while the ribbon camera travels. No glow disc — it read as a
+    // stray gold ring in the pull-out collage.
     this.group.position.set(0.55, -0.42, -1.55)
     this.group.scale.setScalar(0.28)
   }

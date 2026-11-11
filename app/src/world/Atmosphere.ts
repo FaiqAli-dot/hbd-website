@@ -84,6 +84,9 @@ export class Atmosphere {
     this.bgMat.uniforms.uColorA.value.set(a)
     this.bgMat.uniforms.uColorB.value.set(b)
     this.bgMat.uniforms.uColorC.value.set(c)
+    // Dim atmospheric dust on finale so it cannot bloom into a white disc
+    this.dustMat.uniforms.uSize.value = chapter === 'finale' ? 12 : chapter === 'gallery' ? 36 : 42
+    this.dust.visible = chapter !== 'finale'
   }
 
   update(time: number, scroll: number): void {

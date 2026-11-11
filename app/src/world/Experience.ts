@@ -98,6 +98,10 @@ export class Experience {
     this.memories = new MemoriesWorld()
     this.finale = new FinaleWorld(this.tier)
     this.hand3d = new Hand3D()
+    // Keep later chapters fully hidden so their discs/rings never leak into Ch1 collage
+    this.letter.group.visible = false
+    this.memories.group.visible = false
+    this.finale.group.visible = false
     this.scene.add(
       this.gallery.group,
       this.letter.group,
@@ -174,10 +178,11 @@ export class Experience {
     }
     if (this.gallery.hasStartedPullOut()) return
 
+    this.hand3d.setVisible(false)
     const ok = this.gallery.pullOut(() => {
       this.unlockJourney()
       // Hold the lit collage briefly so the dolly-zoom read lands, then ease into Ch2
-      window.setTimeout(() => this.scrollIntoJourney(), prefersReducedMotion() ? 0 : 1600)
+      window.setTimeout(() => this.scrollIntoJourney(), prefersReducedMotion() ? 0 : 1800)
     })
     if (!ok && this.gallery.getProgress().complete) {
       // Reduced-motion / already settled fallback
@@ -212,8 +217,12 @@ export class Experience {
     this.hand3d.demonstrate('scroll-up')
     this.ui.setHint(galleryCopy.scrollHint, '')
 
-    // Seed scroll camera at the pull-out collage
-    this.cameraBase = { x: 0.6, y: 1.4, z: 40, lookY: 0.2 }
+    // Seed scroll camera at the near-field collage framing and hold FOV
+    const collage = this.gallery.getCollageCamera()
+    this.cameraBase = { x: collage.x, y: collage.y, z: collage.z, lookY: collage.lookY }
+    this.camera.fov = collage.fov
+    this.camera.updateProjectionMatrix()
+    this.gallery.finalizeCollage()
 
     void document.body.offsetHeight
     requestAnimationFrame(() => {
@@ -280,6 +289,11 @@ export class Experience {
     }
   }
 
+  /** Exposed for drag-scrub verify scripts via window.__hbd */
+  getDragState(): ReturnType<GalleryWorld['getDragState']> & { convention: string } {
+    return { ...this.gallery.getDragState(), convention: 'drag-world' }
+  }
+
   private bindGyro(): void {
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.beta == null || e.gamma == null) return
@@ -299,12 +313,60 @@ export class Experience {
   }
 
   private bindInput(): void {
+    // Stage must not scroll under gallery drags (iOS)
+    this.app.style.touchAction = 'none'
+    this.canvas.style.touchAction = 'none'
+
+    /**
+     * Drag-world convention (SWIPE_CONVENTION='drag-world'):
+     * content feels glued to the finger — finger left → world/content left →
+     * camera travels right along the Bezier toward the next print.
+     */
+    const COMMIT_DIST = 0.38 // full commit ≈ 38% of viewport axis
+    const COMMIT_PROGRESS = 0.3
+    const FLICK_VX = 780
+    let scrubExpected: GestureDirection | 'scroll-up' | null = null
+    let rubber = 0
+
+    const directionFromDelta = (dx: number, dy: number, axis: 'x' | 'y' | null): GestureDirection => {
+      if (axis === 'x') return dx < 0 ? 'left' : 'right'
+      if (axis === 'y') return dy < 0 ? 'up' : 'down'
+      return Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 'left' : 'right') : dy < 0 ? 'up' : 'down'
+    }
+
+    /** Progress in [0,1] for the expected gesture; rubber-band (<0 mapped) if wrong way */
+    const progressForDrag = (
+      expected: GestureDirection,
+      dx: number,
+      dy: number,
+      axis: 'x' | 'y' | null,
+    ): { progress: number; wrong: boolean; signed: number } => {
+      const vw = Math.max(1, window.innerWidth)
+      const vh = Math.max(1, window.innerHeight)
+      // Finger delta that advances the expected gesture under drag-world:
+      // left expect → finger moves left (dx<0); up expect → finger moves up (dy<0)
+      let signed = 0
+      if (expected === 'left' || expected === 'right') {
+        if (axis === 'y') return { progress: 0, wrong: true, signed: 0 }
+        signed = expected === 'left' ? -dx / (COMMIT_DIST * vw) : dx / (COMMIT_DIST * vw)
+      } else {
+        if (axis === 'x') return { progress: 0, wrong: true, signed: 0 }
+        signed = expected === 'up' ? -dy / (COMMIT_DIST * vh) : dy / (COMMIT_DIST * vh)
+      }
+      if (signed < 0) {
+        // Rubber-band: small give, never a dead screen
+        const give = -signed * 0.18
+        return { progress: Math.min(0.12, give), wrong: true, signed }
+      }
+      return { progress: Math.min(1, signed), wrong: false, signed }
+    }
+
     this.detachGestures = attachSwipeGestures(this.app, {
       threshold: 48,
       enabled: () => !this.unlocked && this.chapter === 'gallery',
       onGesture: (dir) => {
+        // Keyboard/wheel still use animated tryGesture; drag uses scrub handlers below
         if (this.unlocked) return
-        // After 08/08, swipe-up triggers the dolly-zoom pull-out
         if (this.awaitingPullOut && dir === 'up') {
           this.beginPullOutAndUnlock()
           return
@@ -312,6 +374,44 @@ export class Experience {
         if (this.awaitingPullOut) return
         const ok = this.gallery.tryGesture(dir)
         if (!ok) this.gallery.shakeHint(this.gallery.group)
+      },
+      onDragStart: () => {
+        if (this.unlocked || this.chapter !== 'gallery') return
+        if (this.awaitingPullOut) return
+        rubber = 0
+        const started = this.gallery.beginScrub()
+        scrubExpected = started?.expected ?? null
+        if (!started) scrubExpected = null
+      },
+      onDragMove: ({ dx, dy, axis }) => {
+        if (!scrubExpected || scrubExpected === 'scroll-up') return
+        const { progress, wrong } = progressForDrag(scrubExpected, dx, dy, axis)
+        rubber = wrong ? progress : 0
+        this.gallery.scrubTo(progress)
+      },
+      onDragEnd: ({ dx, dy, axis, vx, vy }) => {
+        if (this.awaitingPullOut) {
+          const dir = directionFromDelta(dx, dy, axis)
+          if (dir === 'up') this.beginPullOutAndUnlock()
+          return
+        }
+        if (!scrubExpected || scrubExpected === 'scroll-up') {
+          this.gallery.cancelScrub()
+          scrubExpected = null
+          return
+        }
+        const { progress, wrong } = progressForDrag(scrubExpected, dx, dy, axis)
+        const flick =
+          scrubExpected === 'left' || scrubExpected === 'right'
+            ? (scrubExpected === 'left' ? -vx : vx)
+            : scrubExpected === 'up'
+              ? -vy
+              : vy
+        const commit = !wrong && (progress >= COMMIT_PROGRESS || flick > FLICK_VX)
+        this.gallery.endScrub({ commit, velocity: flick })
+        if (!commit && wrong) this.gallery.shakeHint(this.gallery.group)
+        scrubExpected = null
+        void rubber
       },
     })
 
@@ -435,11 +535,11 @@ export class Experience {
         const p = self.progress
         if (p < 0.33) {
           const t = p / 0.33
-          // From pull-out collage (z≈40) into the letter field (z≈-18)
-          this.cameraBase.z = THREE.MathUtils.lerp(40, -18, t)
-          this.cameraBase.y = THREE.MathUtils.lerp(1.4, 0.2, t)
-          this.cameraBase.x = THREE.MathUtils.lerp(0.6, Math.sin(t * Math.PI) * 0.45, t)
-          this.cameraBase.lookY = THREE.MathUtils.lerp(0.2, 0.05, t)
+          // From near collage (z≈5.2) into the letter field (z≈-18)
+          this.cameraBase.z = THREE.MathUtils.lerp(6.8, -18, t)
+          this.cameraBase.y = THREE.MathUtils.lerp(0.25, 0.2, t)
+          this.cameraBase.x = THREE.MathUtils.lerp(0.1, Math.sin(t * Math.PI) * 0.45, t)
+          this.cameraBase.lookY = 0.05
           this.setChapter('letter')
         } else if (p < 0.66) {
           const t = (p - 0.33) / 0.33
@@ -469,10 +569,16 @@ export class Experience {
     if (chapter !== 'gallery') this.hand3d.setVisible(false)
     else this.hand3d.setVisible(true)
 
+    // Clamp bloom hard on the handwritten finale — no blown-out white disc
+    this.post.setBloomMul(chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : 0.9)
+    this.renderer.toneMappingExposure = chapter === 'finale' ? 0.88 : 1.0
+
     if (chapter === 'letter' && !this.transitionFlags.toLetter) {
       this.transitionFlags.toLetter = true
+      this.letter.group.visible = true
       const targets = this.letter.getDiscWorldTargets()
       const handoff = this.gallery.getSettledHandoff()
+      // Square → disc morph happens together AFTER the pull-out collage has settled
       this.letter.playContinuousFromPhotos(handoff)
       if (!prefersReducedMotion()) {
         this.gallery.morphIntoLetter(targets)
@@ -482,6 +588,7 @@ export class Experience {
 
     if (chapter === 'memories' && !this.transitionFlags.toMemories) {
       this.transitionFlags.toMemories = true
+      this.memories.group.visible = true
       if (!prefersReducedMotion()) {
         this.letter.expandTowardPortals(this.memories.layoutTargets())
       }
@@ -490,12 +597,19 @@ export class Experience {
 
     if (chapter === 'finale' && !this.transitionFlags.toFinale) {
       this.transitionFlags.toFinale = true
+      this.finale.group.visible = true
       const worldPos = this.memories.getWorldPositions()
       const colors = this.memories.samplePortalColors(128)
-      // Portal particles gather toward the nib, then handwriting begins
+      // Portal particles gather into the nib, then dissolve completely before writing
       this.finale.playFromPortals(worldPos, colors)
       this.memories.dissolve()
       this.letter.dissolveForFinale()
+      // Hard-hide leftovers so no gold rings / portal discs remain behind the ink
+      window.setTimeout(() => {
+        this.letter.group.visible = false
+        this.memories.group.visible = false
+        this.gallery.group.visible = false
+      }, 1400)
     }
   }
 
@@ -569,16 +683,20 @@ export class Experience {
       this.camera.position.x += (tx - this.camera.position.x) * 0.1
       this.camera.position.y += (ty - this.camera.position.y) * 0.1
       this.camera.position.z += (tz - this.camera.position.z) * 0.12
-      // Ease FOV back toward a comfortable chapter FOV after dolly-zoom
-      const targetFov = this.chapter === 'finale' ? 42 : 44
+      // Hold the collage FOV while still on gallery; only widen after Ch2+
+      const collageFov = this.gallery.getCollageCamera().fov
+      const targetFov =
+        this.chapter === 'finale' ? 42 : this.chapter === 'gallery' ? collageFov : 44
       if (Math.abs(this.camera.fov - targetFov) > 0.05) {
-        this.camera.fov += (targetFov - this.camera.fov) * 0.04
+        this.camera.fov += (targetFov - this.camera.fov) * 0.06
         this.camera.updateProjectionMatrix()
       }
+      const lookZ =
+        this.chapter === 'gallery' ? this.camera.position.z - 6.7 : this.camera.position.z - 8
       this.camera.lookAt(
         parallaxX * 0.4,
         this.cameraBase.lookY + parallaxY * 0.15,
-        this.camera.position.z - 8,
+        lookZ,
       )
     }
 

@@ -98,10 +98,11 @@ export class FinaleWorld {
     this.mat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      // Normal blending — additive pile-ups were blowing out to white
+      blending: THREE.NormalBlending,
       uniforms: {
         uPR: { value: Math.min(window.devicePixelRatio || 1, 2) },
-        uSize: { value: 1 },
+        uSize: { value: 0.55 },
       },
       vertexShader: `
         attribute float size;
@@ -115,7 +116,8 @@ export class FinaleWorld {
           vC = color;
           vA = aAlpha;
           vec4 mv = modelViewMatrix * vec4(position, 1.0);
-          gl_PointSize = size * uSize * uPR * (180.0 / max(0.5, -mv.z));
+          float psz = size * uSize * uPR * (90.0 / max(1.0, -mv.z));
+          gl_PointSize = clamp(psz, 1.0, 14.0);
           gl_Position = projectionMatrix * mv;
         }
       `,
@@ -124,9 +126,11 @@ export class FinaleWorld {
         varying float vA;
         void main() {
           float d = length(gl_PointCoord - 0.5);
-          float a = exp(-d * d * 16.0) * vA;
-          if (a < 0.01) discard;
-          gl_FragColor = vec4(vC * a * 0.95, a);
+          float a = smoothstep(0.5, 0.05, d) * vA;
+          if (a < 0.02) discard;
+          // Soft rose only — never push toward white
+          vec3 c = min(vC, vec3(0.96, 0.82, 0.86));
+          gl_FragColor = vec4(c, a * 0.7);
         }
       `,
     })
@@ -187,49 +191,77 @@ export class FinaleWorld {
     this.points.geometry.attributes.color.needsUpdate = true
     this.points.geometry.attributes.aAlpha.needsUpdate = true
 
-    // Gather target: center of the writing plane (local)
-    this.gatherTargets = [new THREE.Vector3(0, 0.4, 0)]
+    // Gather toward a soft nib point, then fully clear the cloud so nothing
+    // remains as a blown-out disc behind the writing.
+    this.gatherTargets = [new THREE.Vector3(0, 0.35, 0)]
 
     if (prefersReducedMotion()) {
+      this.clearParticles()
       this.mountSvgInstant()
       return
     }
 
     this.morphing = true
     this.morph.t = 0
-    // Gather toward nib (~1.1s), then start writing
     gsap.to(this.morph, {
       t: 1,
-      duration: 1.15,
+      duration: 1.05,
       ease: 'power3.inOut',
       onUpdate: () => this.applyGather(),
       onComplete: () => {
-        this.morphing = false
-        this.mountAndWrite()
+        // Dissolve the gathered cloud completely — portals are gone
+        gsap.to(this.morph, {
+          t: 0,
+          duration: 0.45,
+          ease: 'power2.in',
+          onUpdate: () => {
+            const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
+            for (let i = 0; i < this.count; i++) alp.setX(i, Math.max(0, alp.getX(i) * 0.82))
+            alp.needsUpdate = true
+          },
+          onComplete: () => {
+            this.clearParticles()
+            this.morphing = false
+            this.mountAndWrite()
+          },
+        })
       },
     })
+  }
+
+  private clearParticles(): void {
+    const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
+    for (let i = 0; i < this.count; i++) {
+      alp.setX(i, 0)
+      this.age[i] = 1e9
+      this.life[i] = 0
+    }
+    alp.needsUpdate = true
   }
 
   private applyGather(): void {
     const t = this.morph.t
     const posAttr = this.points.geometry.getAttribute('position') as THREE.BufferAttribute
     const target = this.gatherTargets[0]
+    const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
+    const siz = this.points.geometry.getAttribute('size') as THREE.BufferAttribute
     for (let i = 0; i < this.count; i++) {
       const ix = i * 3
-      // Spiral inward
-      const ang = t * 4.2 + i * 0.07
-      const radius = (1 - t) * (1.2 + (i % 7) * 0.35)
-      const tx = target.x + Math.cos(ang) * radius * 0.15
-      const ty = target.y + Math.sin(ang * 1.3) * radius * 0.1
-      const tz = target.z + (1 - t) * ((i % 5) - 2) * 0.08
-      posAttr.array[ix] += (tx - posAttr.array[ix]) * (0.08 + t * 0.2)
-      posAttr.array[ix + 1] += (ty - posAttr.array[ix + 1]) * (0.08 + t * 0.2)
-      posAttr.array[ix + 2] += (tz - posAttr.array[ix + 2]) * (0.08 + t * 0.2)
-      const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
-      alp.setX(i, 0.25 + 0.55 * t)
+      const ang = t * 3.6 + i * 0.09
+      const radius = (1 - t) * (1.6 + (i % 7) * 0.4)
+      const tx = target.x + Math.cos(ang) * radius * 0.22
+      const ty = target.y + Math.sin(ang * 1.2) * radius * 0.14
+      const tz = target.z + (1 - t) * ((i % 5) - 2) * 0.06
+      posAttr.array[ix] += (tx - posAttr.array[ix]) * (0.1 + t * 0.22)
+      posAttr.array[ix + 1] += (ty - posAttr.array[ix + 1]) * (0.1 + t * 0.22)
+      posAttr.array[ix + 2] += (tz - posAttr.array[ix + 2]) * (0.1 + t * 0.22)
+      // Stay dim — never pile into a white hotspot
+      alp.setX(i, 0.12 + 0.22 * t)
+      siz.setX(i, 1.4 + this.rnd() * 2.2)
     }
     posAttr.needsUpdate = true
-    this.points.geometry.attributes.aAlpha.needsUpdate = true
+    alp.needsUpdate = true
+    siz.needsUpdate = true
   }
 
   private mountSvgInstant(): void {
@@ -272,13 +304,11 @@ export class FinaleWorld {
         <stop offset="1" stop-color="#E4A3B1"/>
       </linearGradient>
       <radialGradient id="nibHalo">
-        <stop offset="0" stop-color="#FFF4F6" stop-opacity=".95"/>
-        <stop offset=".18" stop-color="#F7CBD4" stop-opacity=".55"/>
-        <stop offset=".55" stop-color="#E8A0AE" stop-opacity=".14"/>
+        <stop offset="0" stop-color="#F4C9D1" stop-opacity=".85"/>
+        <stop offset=".35" stop-color="#E8A0AE" stop-opacity=".35"/>
         <stop offset="1" stop-color="#E8A0AE" stop-opacity="0"/>
       </radialGradient>
-      <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="1.8"/></filter>
-      <filter id="wide" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="5.5"/></filter>
+      <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="1.2"/></filter>
     `
     svg.appendChild(defs)
 
@@ -286,17 +316,11 @@ export class FinaleWorld {
     maskG.setAttribute('id', 'finale-masks')
     svg.appendChild(maskG)
 
-    const inkUseWide = document.createElementNS(NS, 'use')
-    inkUseWide.setAttribute('href', '#finale-ink')
-    inkUseWide.setAttribute('filter', 'url(#wide)')
-    inkUseWide.setAttribute('opacity', '0.14')
-    inkUseWide.style.color = '#E8A0AE'
-    svg.appendChild(inkUseWide)
-
+    // Soft wash kept very light so capitals stay crisp (was ghosting H/B)
     const inkUseSoft = document.createElementNS(NS, 'use')
     inkUseSoft.setAttribute('href', '#finale-ink')
     inkUseSoft.setAttribute('filter', 'url(#soft)')
-    inkUseSoft.setAttribute('opacity', '0.32')
+    inkUseSoft.setAttribute('opacity', '0.1')
     svg.appendChild(inkUseSoft)
 
     const inkG = document.createElementNS(NS, 'g')
@@ -306,7 +330,8 @@ export class FinaleWorld {
     const nib = document.createElementNS(NS, 'g')
     nib.setAttribute('id', 'finale-nib')
     nib.setAttribute('opacity', '0')
-    nib.innerHTML = `<circle r="9" fill="url(#nibHalo)"/><circle r="1.15" fill="#FFF6F8"/>`
+    // Soft rose nib only — no white core
+    nib.innerHTML = `<circle r="6.5" fill="url(#nibHalo)"/><circle r="1.05" fill="#E8A0AE"/>`
     svg.appendChild(nib)
     this.nibEl = nib
 
@@ -344,8 +369,12 @@ export class FinaleWorld {
         mp.setAttribute('d', s.center)
         mp.setAttribute('fill', 'none')
         mp.setAttribute('stroke', '#fff')
-        mp.setAttribute('stroke-width', (s.wmax + 2.2).toFixed(2))
-        mp.setAttribute('stroke-linecap', 'butt')
+        // Capitals use solid silhouettes — mask stroke must cover the full glyph
+        // width or the letter reads as fragmented scraps.
+        const isCap = i === 0 || i === 8
+        const sw = isCap ? 36 : Math.max(s.wmax, 6) + 3.5
+        mp.setAttribute('stroke-width', sw.toFixed(2))
+        mp.setAttribute('stroke-linecap', isCap ? 'round' : 'butt')
         mp.setAttribute('stroke-linejoin', 'round')
         m.appendChild(mp)
         maskG.appendChild(m)
@@ -353,6 +382,8 @@ export class FinaleWorld {
         const p = document.createElementNS(NS, 'path')
         p.setAttribute('d', s.outline)
         p.setAttribute('fill', 'url(#inkG)')
+        const fillRule = (s as { fillRule?: string }).fillRule
+        if (fillRule) p.setAttribute('fill-rule', fillRule)
         p.setAttribute('mask', `url(#fm${i})`)
         this.wordGroups[s.word].appendChild(p)
 
@@ -486,28 +517,28 @@ export class FinaleWorld {
     const pos = this.startPositions
     const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
     const siz = this.points.geometry.getAttribute('size') as THREE.BufferAttribute
-    // Map screen → local approx for world particles near writing plane
     const lx = ((x / window.innerWidth) * 2 - 1) * 4.5
     const ly = -((y / window.innerHeight) * 2 - 1) * 2.6
 
-    for (let k = 0; k < n; k++) {
+    const count = Math.min(n, glowy ? 1 : 3)
+    for (let k = 0; k < count; k++) {
       const i = this.head
       this.head = (this.head + 1) % this.count
       const a = this.rnd() * Math.PI * 2
-      const sp = 0.015 + this.rnd() * 0.04
-      pos[i * 3] = lx + (this.rnd() - 0.5) * 0.08
-      pos[i * 3 + 1] = ly + (this.rnd() - 0.5) * 0.08
-      pos[i * 3 + 2] = (this.rnd() - 0.5) * 0.2
-      this.vel[i * 2] = Math.cos(a) * sp - vx * 0.00008
-      this.vel[i * 2 + 1] = Math.sin(a) * sp - vy * 0.00008 - 0.01
-      this.life[i] = (glowy ? 2.4 : 1.1) + this.rnd() * 1.3
+      const sp = 0.008 + this.rnd() * 0.02
+      pos[i * 3] = lx + (this.rnd() - 0.5) * 0.05
+      pos[i * 3 + 1] = ly + (this.rnd() - 0.5) * 0.05
+      pos[i * 3 + 2] = (this.rnd() - 0.5) * 0.12
+      this.vel[i * 2] = Math.cos(a) * sp - vx * 0.00004
+      this.vel[i * 2 + 1] = Math.sin(a) * sp - vy * 0.00004 - 0.006
+      this.life[i] = (glowy ? 1.2 : 0.7) + this.rnd() * 0.6
       this.age[i] = 0
-      siz.setX(i, (glowy ? 7 : 2.2) + this.rnd() * (glowy ? 9 : 4.5))
+      siz.setX(i, (glowy ? 2.4 : 1.2) + this.rnd() * (glowy ? 2.2 : 1.8))
       const c = new THREE.Color(PALETTE[(this.rnd() * PALETTE.length) | 0])
-      this.colors[i * 3] = c.r
-      this.colors[i * 3 + 1] = c.g
-      this.colors[i * 3 + 2] = c.b
-      alp.setX(i, 0.8)
+      this.colors[i * 3] = Math.min(c.r, 0.96)
+      this.colors[i * 3 + 1] = Math.min(c.g, 0.82)
+      this.colors[i * 3 + 2] = Math.min(c.b, 0.86)
+      alp.setX(i, glowy ? 0.35 : 0.28)
     }
     this.points.geometry.attributes.position.needsUpdate = true
     this.points.geometry.attributes.color.needsUpdate = true
@@ -580,13 +611,12 @@ export class FinaleWorld {
       const vx = (sx - this.lastNib[0]) / Math.max(dt, 1e-3)
       const vy = (sy - this.lastNib[1]) / Math.max(dt, 1e-3)
       const spd = Math.hypot(vx, vy)
-      const n = Math.min(8, 2 + Math.floor(spd / 200))
+      const n = Math.min(3, 1 + Math.floor(spd / 400))
       this.emit(sx, sy, vx, vy, n, false)
-      if (this.rnd() < 0.22) this.emit(sx, sy, vx, vy, 1, true)
+      if (this.rnd() < 0.08) this.emit(sx, sy, vx, vy, 1, true)
     }
     this.lastNib = [sx, sy]
 
-    // Integrate trail particles
     const pos = this.startPositions
     const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
     for (let i = 0; i < this.count; i++) {
@@ -596,21 +626,22 @@ export class FinaleWorld {
       }
       this.age[i] += dt
       const k = this.age[i] / this.life[i]
-      const cx = Math.sin(pos[i * 3 + 1] * 2 + this.age[i] * 1.3) * 0.02
+      const cx = Math.sin(pos[i * 3 + 1] * 2 + this.age[i] * 1.3) * 0.01
       this.vel[i * 2] += cx * dt
-      this.vel[i * 2] *= 0.985
-      this.vel[i * 2 + 1] = this.vel[i * 2 + 1] * 0.985 - 0.012 * dt
+      this.vel[i * 2] *= 0.98
+      this.vel[i * 2 + 1] = this.vel[i * 2 + 1] * 0.98 - 0.008 * dt
       pos[i * 3] += this.vel[i * 2]
       pos[i * 3 + 1] += this.vel[i * 2 + 1]
-      alp.setX(i, Math.pow(1 - k, 1.5) * Math.min(1, this.age[i] * 8) * 0.85)
+      alp.setX(i, Math.pow(1 - k, 1.6) * Math.min(1, this.age[i] * 6) * 0.28)
     }
 
+    // After ink is done, keep trails extremely sparse — no glowing disc buildup
     if (ms > (this.marks.inkDone ?? 9000)) {
       const g = utils.clamp((ms - (this.marks.inkDone ?? 9000)) / 1500, 0, 1)
-      if (this.rnd() < 0.55 * g && this.shimmer.length) {
+      if (this.rnd() < 0.06 * g && this.shimmer.length) {
         const m = this.shimmer[(this.rnd() * this.shimmer.length) | 0]
         const [qx, qy] = this.toScreen(m.x, m.y, m.w)
-        this.emit(qx, qy, 0, 0, 1, this.rnd() < 0.3)
+        this.emit(qx, qy, 0, 0, 1, false)
       }
     }
 
