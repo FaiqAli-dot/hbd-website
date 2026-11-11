@@ -433,12 +433,8 @@ html.gallery-complete .gallery-hud .hand {
   justify-items: center;
   padding: 0 1rem 6vh;
   text-align: center;
-  background: radial-gradient(
-    120% 90% at 50% 42%,
-    var(--plum-2) 0%,
-    var(--plum-1) 38%,
-    var(--plum-0) 78%
-  );
+  /* Keep overlay clear so Three.js rose trails + atmosphere show through */
+  background: transparent;
 }
 
 .finale-write {

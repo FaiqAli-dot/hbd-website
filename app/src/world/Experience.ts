@@ -176,8 +176,8 @@ export class Experience {
 
     const ok = this.gallery.pullOut(() => {
       this.unlockJourney()
-      // Soft auto-advance into the letter after the collage settles
-      window.setTimeout(() => this.scrollIntoJourney(), prefersReducedMotion() ? 0 : 420)
+      // Hold the lit collage briefly so the dolly-zoom read lands, then ease into Ch2
+      window.setTimeout(() => this.scrollIntoJourney(), prefersReducedMotion() ? 0 : 1600)
     })
     if (!ok && this.gallery.getProgress().complete) {
       // Reduced-motion / already settled fallback

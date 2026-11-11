@@ -47,8 +47,9 @@ export class FinaleWorld {
   private morph = { t: 0 }
   private morphing = false
   private writing = false
-  private simT = 0
+  private writeStartedAt = 0
   private lastNib: [number, number] | null = null
+  private lastStepWall = 0
   private nibObj = { x: 0, y: 0, lift: 1, w: 0 }
   private strokes: StrokeRuntime[] = []
   private wordGroups: SVGGElement[] = []
@@ -252,7 +253,8 @@ export class FinaleWorld {
     this.mountSvgDom()
     this.buildTimeline()
     this.writing = true
-    this.simT = 0
+    this.writeStartedAt = performance.now()
+    this.lastStepWall = this.writeStartedAt
     this.tl?.seek(0)
   }
 
@@ -275,8 +277,8 @@ export class FinaleWorld {
         <stop offset=".55" stop-color="#E8A0AE" stop-opacity=".14"/>
         <stop offset="1" stop-color="#E8A0AE" stop-opacity="0"/>
       </radialGradient>
-      <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="2.6"/></filter>
-      <filter id="wide" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="9"/></filter>
+      <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="1.8"/></filter>
+      <filter id="wide" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="5.5"/></filter>
     `
     svg.appendChild(defs)
 
@@ -287,14 +289,14 @@ export class FinaleWorld {
     const inkUseWide = document.createElementNS(NS, 'use')
     inkUseWide.setAttribute('href', '#finale-ink')
     inkUseWide.setAttribute('filter', 'url(#wide)')
-    inkUseWide.setAttribute('opacity', '0.22')
+    inkUseWide.setAttribute('opacity', '0.14')
     inkUseWide.style.color = '#E8A0AE'
     svg.appendChild(inkUseWide)
 
     const inkUseSoft = document.createElementNS(NS, 'use')
     inkUseSoft.setAttribute('href', '#finale-ink')
     inkUseSoft.setAttribute('filter', 'url(#soft)')
-    inkUseSoft.setAttribute('opacity', '0.42')
+    inkUseSoft.setAttribute('opacity', '0.32')
     svg.appendChild(inkUseSoft)
 
     const inkG = document.createElementNS(NS, 'g')
@@ -304,7 +306,7 @@ export class FinaleWorld {
     const nib = document.createElementNS(NS, 'g')
     nib.setAttribute('id', 'finale-nib')
     nib.setAttribute('opacity', '0')
-    nib.innerHTML = `<circle r="15" fill="url(#nibHalo)"/><circle r="1.5" fill="#FFF6F8"/>`
+    nib.innerHTML = `<circle r="9" fill="url(#nibHalo)"/><circle r="1.15" fill="#FFF6F8"/>`
     svg.appendChild(nib)
     this.nibEl = nib
 
@@ -513,11 +515,15 @@ export class FinaleWorld {
     alp.needsUpdate = true
   }
 
-  private stepWriting(dt: number): void {
+  private stepWriting(_frameDt: number): void {
     if (!this.tl || !this.writing) return
-    this.simT += dt * 1000
-    const ms = this.simT
+    // Drive from wall clock so low headless FPS cannot crawl the handwriting.
+    const now = performance.now()
+    const ms = Math.max(0, now - this.writeStartedAt)
+    const dt = Math.min(0.05, Math.max(0.001, (now - this.lastStepWall) / 1000))
+    this.lastStepWall = now
     this.tl.seek(ms)
+    void _frameDt
 
     let active: StrokeRuntime | null = null
     for (const s of this.strokes) {
@@ -623,7 +629,9 @@ export class FinaleWorld {
     }
     if (!this.tl) return
     const end = this.marks.end ?? 12300
-    this.simT = Math.max(0, Math.min(end, frac * end))
+    const ms = Math.max(0, Math.min(end, frac * end))
+    this.writeStartedAt = performance.now() - ms
+    this.lastStepWall = performance.now()
     this.writing = true
     this.stepWriting(0.008)
   }

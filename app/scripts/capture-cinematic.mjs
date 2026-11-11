@@ -70,10 +70,12 @@ async function runDesktop() {
   // Dolly-zoom pull-out via Continue
   const cont = page.locator('[data-continue]')
   await cont.click({ force: true })
-  await page.waitForTimeout(1800)
+  await page.waitForTimeout(1600)
   await shot(page, 'cine-ch1-pullout-mid')
   await page.waitForTimeout(2800)
+  // Collage holds ~1.6s after pull-out before auto-scroll into the letter
   await shot(page, 'cine-ch1-collage')
+  await page.waitForTimeout(2000)
 
   const panelY = async (id) =>
     page.evaluate((sel) => {
