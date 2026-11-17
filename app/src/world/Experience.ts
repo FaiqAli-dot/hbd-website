@@ -61,6 +61,10 @@ export class Experience {
   private hintIdleTimer: ReturnType<typeof setTimeout> | null = null
   private hintsSoftened = false
   private gestureSuccesses = 0
+  /** Ch3 gate: scroll past memories is locked until all portals are watched */
+  private memoriesScrollMax = 0.64
+  private memoriesHintShown = false
+  private rubberBandTween: gsap.core.Tween | null = null
 
   constructor(app: HTMLElement) {
     this.app = app
@@ -116,6 +120,11 @@ export class Experience {
       this.memories.group,
       this.finale.group,
     )
+    this.memories.onAllWatched(() => {
+      this.memoriesHintShown = true
+      this.ui.setMemoryHint(galleryCopy.scrollHint)
+      this.ui.setHint(galleryCopy.scrollHint, '')
+    })
     // Hand rides with the camera so the guide stays framed during ribbon travel
     this.hand3d.attachToCamera(this.camera)
 
@@ -370,6 +379,19 @@ export class Experience {
     this.memories.group.visible = this.chapter === 'memories' || this.chapter === 'finale'
   }
 
+  /** Test helper — screen-space portal AABBs at rest */
+  projectMemoriesBounds(): Array<{ x: number; y: number; w: number; h: number; index: number }> {
+    return this.memories.getScreenBounds(
+      this.camera,
+      window.innerWidth,
+      window.innerHeight,
+    )
+  }
+
+  getMemoriesApi(): MemoriesWorld {
+    return this.memories
+  }
+
   private bindGyro(): void {
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.beta == null || e.gamma == null) return
@@ -558,9 +580,19 @@ export class Experience {
         this.ui.setMemoryLabel(null)
       }
     }
-    const onClick = (e: PointerEvent) => {
+    // Guided Ch3 taps work on desktop + mobile (canvas is pointer-events:none after unlock)
+    let tapStartX = 0
+    let tapStartY = 0
+    const onPointerDownTap = (e: PointerEvent) => {
+      tapStartX = e.clientX
+      tapStartY = e.clientY
+    }
+    const onPointerUp = (e: PointerEvent) => {
       if (this.chapter !== 'memories') return
-      if (window.matchMedia('(hover: hover)').matches) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest?.('[data-sound], .site-chrome, a, button')) return
+      // Ignore scroll/drags
+      if (Math.hypot(e.clientX - tapStartX, e.clientY - tapStartY) > 14) return
       const x = (e.clientX / window.innerWidth) * 2 - 1
       const y = -(e.clientY / window.innerHeight) * 2 + 1
       const label = this.memories.handlePointer(x, y, this.camera, 'tap')
@@ -569,13 +601,15 @@ export class Experience {
 
     window.addEventListener('pointermove', onPointerMove)
     window.addEventListener('pointerleave', onPointerLeave)
-    window.addEventListener('click', onClick)
+    window.addEventListener('pointerdown', onPointerDownTap)
+    window.addEventListener('pointerup', onPointerUp)
 
     this.extraCleanup.push(
       () => window.removeEventListener('keydown', onKey),
       () => window.removeEventListener('pointermove', onPointerMove),
       () => window.removeEventListener('pointerleave', onPointerLeave),
-      () => window.removeEventListener('click', onClick),
+      () => window.removeEventListener('pointerdown', onPointerDownTap),
+      () => window.removeEventListener('pointerup', onPointerUp),
       () => this.canvas.removeEventListener('touchstart', onUnlockSwipeStart),
       () => this.canvas.removeEventListener('touchend', onUnlockSwipeEnd),
     )
@@ -603,6 +637,7 @@ export class Experience {
 
   private bindScrollCamera(): void {
     this.attachScrollLock()
+    this.attachMemoriesScrollGate()
     this.extraCleanup.push(() => this.detachScrollLock?.())
 
     ScrollTrigger.create({
@@ -612,8 +647,12 @@ export class Experience {
       scrub: prefersReducedMotion() ? false : 1.1,
       onUpdate: (self) => {
         if (!this.unlocked) return
-        this.scrollProgress = self.progress
-        const p = self.progress
+        let p = self.progress
+        // Clamp past Ch3 until every portal has been watched end-to-end
+        if (!this.memories.isScrollUnlocked() && p > this.memoriesScrollMax) {
+          p = this.memoriesScrollMax
+        }
+        this.scrollProgress = p
         if (p < 0.33) {
           const t = p / 0.33
           // From near collage (z≈5.2) into the letter field (z≈-18)
@@ -624,21 +663,101 @@ export class Experience {
           this.setChapter('letter')
         } else if (p < 0.66) {
           const t = (p - 0.33) / 0.33
-          this.cameraBase.z = THREE.MathUtils.lerp(-18, -38, t)
-          this.cameraBase.y = THREE.MathUtils.lerp(0.2, 0.1, t)
-          this.cameraBase.x = Math.cos(t * Math.PI) * 0.55
+          // Hold a comfortable stand-off through Ch3 — portals sync to camera depth.
+          // (Previously camera dove to z≈-38 against portals at -40 → near-fullscreen stack.)
+          const holdZ = -26
+          this.cameraBase.z = THREE.MathUtils.lerp(-18, holdZ, Math.min(1, t / 0.35))
+          this.cameraBase.y = THREE.MathUtils.lerp(0.2, 0.08, t)
+          // Keep x near 0 so the 2×2 stays horizontally centred on mobile
+          this.cameraBase.x = Math.cos(t * Math.PI) * 0.04
           this.cameraBase.lookY = 0.02
           this.setChapter('memories')
         } else {
           const t = (p - 0.66) / 0.34
-          this.cameraBase.z = THREE.MathUtils.lerp(-38, -56, t)
-          this.cameraBase.y = THREE.MathUtils.lerp(0.1, 0.0, t)
+          this.cameraBase.z = THREE.MathUtils.lerp(-26, -56, t)
+          this.cameraBase.y = THREE.MathUtils.lerp(0.08, 0.0, t)
           this.cameraBase.x = Math.sin(t * Math.PI * 0.5) * 0.15
           this.cameraBase.lookY = 0
           this.setChapter('finale')
         }
       },
     })
+  }
+
+  /**
+   * Until all four memories are watched, block scroll into the finale band
+   * with a soft rubber-band + tiny hint.
+   */
+  private attachMemoriesScrollGate(): void {
+    const maxScrollForProgress = (progress: number) => {
+      const max = document.documentElement.scrollHeight - window.innerHeight
+      return Math.max(0, max * progress)
+    }
+
+    const rubberBand = () => {
+      if (this.rubberBandTween) return
+      const y = window.scrollY
+      this.rubberBandTween = gsap.to(
+        {},
+        {
+          duration: 0.45,
+          onStart: () => {
+            window.scrollTo({ top: y - 28, behavior: 'auto' })
+          },
+          onComplete: () => {
+            window.scrollTo({ top: y, behavior: 'smooth' })
+            this.rubberBandTween = null
+          },
+        },
+      )
+      if (!this.memoriesHintShown) {
+        this.ui.setMemoryHint('watch each window')
+        window.setTimeout(() => {
+          if (!this.memories.isScrollUnlocked()) this.ui.setMemoryHint(null)
+        }, 1600)
+      }
+    }
+
+    const onWheel = (e: WheelEvent) => {
+      if (!this.unlocked || this.chapter !== 'memories') return
+      if (this.memories.isScrollUnlocked()) return
+      if (e.deltaY <= 0) return
+      const limit = maxScrollForProgress(this.memoriesScrollMax)
+      if (window.scrollY + e.deltaY > limit - 4) {
+        e.preventDefault()
+        window.scrollTo({ top: limit, behavior: 'auto' })
+        rubberBand()
+      }
+    }
+
+    let touchY = 0
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) touchY = e.touches[0].clientY
+    }
+    const onTouchMove = (e: TouchEvent) => {
+      if (!this.unlocked || this.chapter !== 'memories') return
+      if (this.memories.isScrollUnlocked()) return
+      if (e.touches.length !== 1) return
+      const y = e.touches[0].clientY
+      const dy = touchY - y // finger up → positive
+      touchY = y
+      if (dy <= 0) return
+      const limit = maxScrollForProgress(this.memoriesScrollMax)
+      if (window.scrollY + dy > limit - 4) {
+        e.preventDefault()
+        window.scrollTo({ top: limit, behavior: 'auto' })
+        rubberBand()
+      }
+    }
+
+    window.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('touchstart', onTouchStart, { passive: true })
+    window.addEventListener('touchmove', onTouchMove, { passive: false })
+    this.extraCleanup.push(
+      () => window.removeEventListener('wheel', onWheel),
+      () => window.removeEventListener('touchstart', onTouchStart),
+      () => window.removeEventListener('touchmove', onTouchMove),
+    )
   }
 
   /**
@@ -715,10 +834,14 @@ export class Experience {
 
     // Soft bloom/exposure crossfade — no hard pop between chapters
     // Keep letter bloom low so soft edges don't read as grey portal rings
+    // Memories bloom off — bloom was washing cream halos to grey/blue
     const bloomTarget =
-      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.45 : 0.7
+      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.45 : 0
     // Letter exposure slightly lifted so navy reads blue, not near-black
     const exposureTarget = chapter === 'finale' ? 0.88 : chapter === 'letter' ? 1.08 : 1.0
+    // Keep cream #FEF4AF readable — ACES was greying the invitation glow
+    this.renderer.toneMapping =
+      chapter === 'memories' ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping
     if (prefersReducedMotion()) {
       this.post.setBloomMul(bloomTarget)
       this.renderer.toneMappingExposure = exposureTarget
@@ -821,7 +944,7 @@ export class Experience {
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     this.gallery.setAspect(w / h)
-    this.memories.setAspect(w / h)
+    this.memories.setAspect(w / h, w, h)
     this.gallery.setPixelHeight(h * this.adaptiveDpr.value)
     this.applyPixelRatio(this.adaptiveDpr.value)
     this.renderer.setSize(w, h, false)
@@ -849,20 +972,27 @@ export class Experience {
     this.atmosphere.update(t, this.scrollProgress)
     this.gallery.update(t)
     this.letter.update(t, this.pointer)
+    if (this.chapter === 'memories' || this.chapter === 'finale') {
+      // Camera-relative cluster — size stays stable across the memories scroll band
+      this.memories.syncToCamera(this.camera)
+    }
     this.memories.update(t)
     this.finale.update(t, dtMs / 1000)
 
     const reduced = prefersReducedMotion()
-    const parallaxX = reduced ? 0 : this.pointer.x * 0.18 + this.gyro.x * 0.22
-    const parallaxY = reduced ? 0 : this.pointer.y * 0.12 + this.gyro.y * 0.16
+    // Mute parallax in memories so the 2×2 stays optically centred
+    const paraMul = this.chapter === 'memories' ? 0.15 : 1
+    const parallaxX = reduced ? 0 : (this.pointer.x * 0.18 + this.gyro.x * 0.22) * paraMul
+    const parallaxY = reduced ? 0 : (this.pointer.y * 0.12 + this.gyro.y * 0.16) * paraMul
 
     if (!this.unlocked) {
       // Camera-led ribbon: GalleryWorld owns position/quaternion/FOV
       this.gallery.applyCamera(this.camera, t, { x: parallaxX, y: parallaxY })
     } else {
-      const breathX = reduced ? 0 : Math.sin(t * 0.45) * 0.08
-      const breathY = reduced ? 0 : Math.cos(t * 0.32) * 0.05
-      const breathZ = reduced ? 0 : Math.sin(t * 0.28) * 0.12
+      const breathAmp = this.chapter === 'memories' ? 0.2 : 1
+      const breathX = reduced ? 0 : Math.sin(t * 0.45) * 0.08 * breathAmp
+      const breathY = reduced ? 0 : Math.cos(t * 0.32) * 0.05 * breathAmp
+      const breathZ = reduced ? 0 : Math.sin(t * 0.28) * 0.12 * breathAmp
       const tx = this.cameraBase.x + parallaxX * 0.35 + breathX
       const ty = this.cameraBase.y + parallaxY * 0.25 + breathY
       const tz = this.cameraBase.z + breathZ
@@ -873,17 +1003,31 @@ export class Experience {
       const collageFov = this.gallery.getCollageCamera().fov
       const targetFov =
         this.chapter === 'finale' ? 42 : this.chapter === 'gallery' ? collageFov : 44
+      // Snap FOV in memories so portal screen size matches layout math
+      const fovLerp = this.chapter === 'memories' ? 0.2 : 0.06
       if (Math.abs(this.camera.fov - targetFov) > 0.05) {
-        this.camera.fov += (targetFov - this.camera.fov) * 0.06
+        this.camera.fov += (targetFov - this.camera.fov) * fovLerp
+        this.camera.updateProjectionMatrix()
+      } else if (this.chapter === 'memories' && Math.abs(this.camera.fov - 44) > 0.01) {
+        this.camera.fov = 44
         this.camera.updateProjectionMatrix()
       }
       const lookZ =
         this.chapter === 'gallery' ? this.camera.position.z - 6.7 : this.camera.position.z - 8
-      this.camera.lookAt(
-        parallaxX * 0.4,
-        this.cameraBase.lookY + parallaxY * 0.15,
-        lookZ,
-      )
+      // Memories: look straight ahead on the optical axis so the 2×2 stays centred
+      if (this.chapter === 'memories') {
+        this.camera.lookAt(
+          this.camera.position.x + parallaxX * 0.05,
+          this.camera.position.y + this.cameraBase.lookY * 0.25,
+          lookZ,
+        )
+      } else {
+        this.camera.lookAt(
+          parallaxX * 0.4,
+          this.cameraBase.lookY + parallaxY * 0.15,
+          lookZ,
+        )
+      }
     }
 
     const scrollDelta = Math.abs(this.scrollProgress - this.lastScrollProgress)

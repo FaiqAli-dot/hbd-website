@@ -187,7 +187,13 @@ export const circlePhotos: CirclePhoto[] = [
   },
 ]
 
-/** Ch3 portals — swap these four files to personal clips anytime */
+/**
+ * Ch3 portals — placeholder landscapes for now.
+ * Swap personal clips anytime by replacing:
+ *   app/src/assets/videos/memories/01.mp4 … 04.mp4
+ *   app/src/assets/images/memories/poster-01.jpg … poster-04.jpg
+ * Paths below are wired through Vite imports — no other files need edits.
+ */
 export const memoryVideos: MemoryVideo[] = [
   {
     id: 'm1',

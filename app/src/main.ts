@@ -28,10 +28,15 @@ async function mountApp(): Promise<void> {
   const experience = new Experience(app)
   // Test/debug hook for drag-scrub verifies (no public API surface otherwise)
   ;(window as unknown as {
-    __hbd?: { getDragState: () => unknown; forceCleanLetterStage: () => void }
+    __hbd?: {
+      getDragState: () => unknown
+      forceCleanLetterStage: () => void
+      projectMemoriesBounds: () => Array<{ x: number; y: number; w: number; h: number; index: number }>
+    }
   }).__hbd = {
     getDragState: () => experience.getDragState(),
     forceCleanLetterStage: () => experience.forceCleanLetterStage(),
+    projectMemoriesBounds: () => experience.projectMemoriesBounds(),
   }
 
   window.addEventListener(

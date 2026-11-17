@@ -16,6 +16,7 @@ export interface OverlayApi {
   setHintsSoftened: (soft: boolean) => void
   setChapter: (chapter: 'gallery' | 'letter' | 'memories' | 'finale') => void
   setMemoryLabel: (label: string | null) => void
+  setMemoryHint: (text: string | null) => void
   onUndo: (cb: () => void) => void
   onContinue: (cb: () => void) => void
   handRoot: HTMLElement
@@ -80,6 +81,7 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
       <p class="memories__eyebrow">Four windows</p>
       <h2 class="memories__title">Memories, still moving</h2>
       <p class="memories__active" data-memory-label></p>
+      <p class="memories__hint" data-memory-hint hidden></p>
     </div>
 
     <div class="finale-overlay" data-finale-overlay aria-hidden="true">
@@ -133,6 +135,7 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
   const memoriesOverlay = root.querySelector('[data-memories-overlay]') as HTMLElement
   const finaleOverlay = root.querySelector('[data-finale-overlay]') as HTMLElement
   const memoryLabel = root.querySelector('[data-memory-label]') as HTMLElement
+  const memoryHint = root.querySelector('[data-memory-hint]') as HTMLElement
 
   const continueBtn = root.querySelector('[data-continue]') as HTMLButtonElement
   const continueLabel = root.querySelector('[data-continue-label]') as HTMLElement
@@ -209,6 +212,17 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     },
     setMemoryLabel: (label) => {
       memoryLabel.textContent = label ?? ''
+    },
+    setMemoryHint: (text) => {
+      if (!text) {
+        memoryHint.textContent = ''
+        memoryHint.hidden = true
+        memoryHint.classList.remove('is-shown')
+        return
+      }
+      memoryHint.textContent = text
+      memoryHint.hidden = false
+      memoryHint.classList.add('is-shown')
     },
     onUndo: (cb) => {
       undoCb = cb
