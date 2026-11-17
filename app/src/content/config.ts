@@ -187,34 +187,35 @@ export const circlePhotos: CirclePhoto[] = [
   },
 ]
 
+/** Ch3 portals — swap these four files to personal clips anytime */
 export const memoryVideos: MemoryVideo[] = [
   {
     id: 'm1',
-    src: video01,
-    poster: poster01,
-    caption: 'That winter smile',
-    label: 'Smile',
+    src: video01, // app/src/assets/videos/memories/01.mp4
+    poster: poster01, // app/src/assets/images/memories/poster-01.jpg
+    caption: 'Golden hour, slow bloom',
+    label: 'Spring',
   },
   {
     id: 'm2',
-    src: video02,
-    poster: poster02,
-    caption: 'Soft afternoon light',
-    label: 'Light',
+    src: video02, // app/src/assets/videos/memories/02.mp4
+    poster: poster02, // app/src/assets/images/memories/poster-02.jpg
+    caption: 'Mountains holding the sky',
+    label: 'Wander',
   },
   {
     id: 'm3',
-    src: video03,
-    poster: poster03,
-    caption: 'A quiet glance',
-    label: 'Glance',
+    src: video03, // app/src/assets/videos/memories/03.mp4
+    poster: poster03, // app/src/assets/images/memories/poster-03.jpg
+    caption: 'Light across open land',
+    label: 'Horizon',
   },
   {
     id: 'm4',
-    src: video04,
-    poster: poster04,
-    caption: 'Warm evening glow',
-    label: 'Glow',
+    src: video04, // app/src/assets/videos/memories/04.mp4
+    poster: poster04, // app/src/assets/images/memories/poster-04.jpg
+    caption: 'Dusk settling soft',
+    label: 'Dusk',
   },
 ]
 
