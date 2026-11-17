@@ -233,10 +233,10 @@ export class MemoriesWorld {
     const narrow = aspect < 0.75
     // 390px: pull columns inward, keep enough vertical gap so circles don't overlap
     // (~140–150px), one centered cluster under the title
-    const sx = narrow ? 0.7 : 1
-    const sy = narrow ? 0.96 : 1
-    const portalScale = narrow ? 0.68 : 1
-    this.group.position.y = narrow ? -0.15 : -0.55
+    const sx = narrow ? 0.72 : 1
+    const sy = narrow ? 0.82 : 1
+    const portalScale = narrow ? 0.7 : 1
+    this.group.position.y = narrow ? -0.35 : -0.55
     this.portals.forEach((p, i) => {
       const base = this.baseLayout[i]
       p.rest.x = base.x * sx
@@ -358,7 +358,7 @@ export class MemoriesWorld {
         delay: i * 0.07,
         ease: 'power3.out',
       })
-      const settle = this.aspect < 0.75 ? 0.68 : 1
+      const settle = this.aspect < 0.75 ? 0.7 : 1
       gsap.to(p.group.scale, {
         x: settle,
         y: settle,
@@ -517,7 +517,7 @@ export class MemoriesWorld {
       }
       if (!this.entered) return
       p.group.position.y += Math.sin(time * 0.5 + i) * 0.00055
-      const baseScale = this.aspect < 0.75 ? 0.68 : 1
+      const baseScale = this.aspect < 0.75 ? 0.7 : 1
       const targetScale =
         p.playing && p.material.uniforms.uBoost.value > 0.14 ? baseScale * 1.04 : baseScale
       const s = p.group.scale
