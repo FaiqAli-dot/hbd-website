@@ -28,20 +28,20 @@ export class MemoriesWorld {
   private entered = false
   private loader = new THREE.TextureLoader()
   /**
-   * Desktop rest layout — ~200–240px at 1280×800 under the title.
-   * Mobile remaps via setAspect (pull inward, slight scale down).
+   * Desktop rest layout — ~190px diameter at 1280×800 with a clear gap under the title.
+   * Mobile remaps via setAspect (~150px, ≥20px side margins, fully on-screen).
    */
   private baseLayout = [
-    { x: -2.4, y: 2.05, z: 0.25, s: 1.7 },
-    { x: 2.4, y: 2.05, z: 0.15, s: 1.7 },
-    { x: -2.4, y: -2.05, z: 0.2, s: 1.7 },
-    { x: 2.4, y: -2.05, z: 0.3, s: 1.7 },
+    { x: -1.85, y: 1.4, z: 0.25, s: 1.25 },
+    { x: 1.85, y: 1.4, z: 0.15, s: 1.25 },
+    { x: -1.85, y: -1.4, z: 0.2, s: 1.25 },
+    { x: 1.85, y: -1.4, z: 0.3, s: 1.25 },
   ]
   private aspect = 1.6
 
   constructor() {
-    // Slightly closer + lowered so the 2×2 sits centered under the title
-    this.group.position.set(0, -0.55, -40)
+    // Lowered so the cluster clears "Memories, still moving" and centres in the remaining field
+    this.group.position.set(0, -1.7, -40)
 
     // Balanced 2×2 with breathing room (desktop). Mobile tightened in setAspect.
     const layout = this.baseLayout
@@ -227,16 +227,15 @@ export class MemoriesWorld {
     }
   }
 
-  /** Remap portal rest poses for narrow viewports — one tight group, not edge-pinned columns */
+  /** Remap portal rest poses for narrow viewports — one tight group, ≥20px side margins */
   setAspect(aspect: number): void {
     this.aspect = aspect
     const narrow = aspect < 0.75
-    // 390px: pull columns inward, keep enough vertical gap so circles don't overlap
-    // (~140–150px), one centered cluster under the title
-    const sx = narrow ? 0.72 : 1
-    const sy = narrow ? 0.82 : 1
-    const portalScale = narrow ? 0.7 : 1
-    this.group.position.y = narrow ? -0.35 : -0.55
+    // 390px: ~150px portals, ≥20px side margins, fully inside the viewport
+    const sx = narrow ? 0.5 : 1
+    const sy = narrow ? 0.72 : 1
+    const portalScale = narrow ? 0.62 : 1
+    this.group.position.y = narrow ? -0.45 : -1.7
     this.portals.forEach((p, i) => {
       const base = this.baseLayout[i]
       p.rest.x = base.x * sx
@@ -358,7 +357,7 @@ export class MemoriesWorld {
         delay: i * 0.07,
         ease: 'power3.out',
       })
-      const settle = this.aspect < 0.75 ? 0.7 : 1
+      const settle = this.aspect < 0.75 ? 0.62 : 1
       gsap.to(p.group.scale, {
         x: settle,
         y: settle,
@@ -517,7 +516,7 @@ export class MemoriesWorld {
       }
       if (!this.entered) return
       p.group.position.y += Math.sin(time * 0.5 + i) * 0.00055
-      const baseScale = this.aspect < 0.75 ? 0.7 : 1
+      const baseScale = this.aspect < 0.75 ? 0.62 : 1
       const targetScale =
         p.playing && p.material.uniforms.uBoost.value > 0.14 ? baseScale * 1.04 : baseScale
       const s = p.group.scale
