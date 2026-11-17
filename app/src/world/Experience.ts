@@ -716,8 +716,9 @@ export class Experience {
     // Soft bloom/exposure crossfade — no hard pop between chapters
     // Keep letter bloom low so soft edges don't read as grey portal rings
     const bloomTarget =
-      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.35 : 0.7
-    const exposureTarget = chapter === 'finale' ? 0.88 : 1.0
+      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.45 : 0.7
+    // Letter exposure slightly lifted so navy reads blue, not near-black
+    const exposureTarget = chapter === 'finale' ? 0.88 : chapter === 'letter' ? 1.08 : 1.0
     if (prefersReducedMotion()) {
       this.post.setBloomMul(bloomTarget)
       this.renderer.toneMappingExposure = exposureTarget
@@ -820,6 +821,7 @@ export class Experience {
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     this.gallery.setAspect(w / h)
+    this.memories.setAspect(w / h)
     this.gallery.setPixelHeight(h * this.adaptiveDpr.value)
     this.applyPixelRatio(this.adaptiveDpr.value)
     this.renderer.setSize(w, h, false)

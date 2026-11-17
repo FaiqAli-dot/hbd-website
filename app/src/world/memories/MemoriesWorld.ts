@@ -16,6 +16,8 @@ interface Portal {
   /** Canvas blit target — avoids THREE.VideoTexture (crashes some WebKit/WPE builds) */
   frameCanvas: HTMLCanvasElement | null
   frameCtx: CanvasRenderingContext2D | null
+  posterSrc?: string
+  hasContentFrame: boolean
 }
 
 export class MemoriesWorld {
@@ -24,16 +26,21 @@ export class MemoriesWorld {
   private raycaster = new THREE.Raycaster()
   private pointer = new THREE.Vector2()
   private entered = false
+  private loader = new THREE.TextureLoader()
+  /** Desktop rest layout — mobile remaps via setAspect */
+  private baseLayout = [
+    { x: -2.2, y: 1.25, z: 0.35, s: 1.0 },
+    { x: 2.2, y: 1.25, z: 0.2, s: 1.0 },
+    { x: -2.2, y: -1.25, z: 0.25, s: 1.0 },
+    { x: 2.2, y: -1.25, z: 0.4, s: 1.0 },
+  ]
+  private aspect = 1.6
 
   constructor() {
     this.group.position.set(0, 0, -42)
 
-    const layout = [
-      { x: -3.1, y: 1.25, z: 0.6, s: 1.2 },
-      { x: 3.0, y: 1.35, z: -0.3, s: 1.3 },
-      { x: -2.6, y: -1.35, z: 0.2, s: 1.1 },
-      { x: 2.7, y: -1.2, z: 0.9, s: 1.25 },
-    ]
+    // Balanced 2×2 with breathing room (desktop). Mobile tightened in setAspect.
+    const layout = this.baseLayout
 
     memoryVideos.forEach((mem, i) => {
       const place = layout[i]
@@ -42,15 +49,15 @@ export class MemoriesWorld {
       video.loop = true
       video.muted = true
       video.playsInline = true
-      // Defer src + VideoTexture until entrance — early VideoTexture crashes some WebKit/WPE builds
       video.preload = 'none'
       video.setAttribute('playsinline', '')
       video.setAttribute('muted', '')
       video.dataset.src = mem.src
+      if (mem.poster) video.poster = mem.poster
 
-      // 1×1 rose placeholder until the real video frame is bound
+      // Neutral navy until real poster paints — never cream/yellow gradient seed
       const placeholder = new THREE.DataTexture(
-        new Uint8Array([210, 140, 150, 255]),
+        new Uint8Array([0, 26, 64, 255]),
         1,
         1,
         THREE.RGBAFormat,
@@ -65,35 +72,25 @@ export class MemoriesWorld {
         depthWrite: false,
         uniforms: {
           uMap: { value: placeholder },
-          uSoft: { value: 0.06 },
+          uSoft: { value: 0.055 },
           uBoost: { value: 0 },
           uOpacity: { value: 0 },
+          uRim: { value: 0 },
         },
         vertexShader: photoRevealVertex,
         fragmentShader: circleMaskFragment,
       })
 
-      const mesh = new THREE.Mesh(new THREE.CircleGeometry(place.s, 64), material)
+      const mesh = new THREE.Mesh(new THREE.CircleGeometry(place.s, 96), material)
       const portalGroup = new THREE.Group()
-      // Start already near rest so mid-entrance reads as a spread, not a stacked clump
-      portalGroup.position.set(place.x * 0.94, place.y * 0.94, place.z - 0.2)
-      portalGroup.scale.setScalar(0.78)
+      // Start near rest — mid handoff already reads as a spread 2×2
+      portalGroup.position.set(place.x * 0.9, place.y * 0.9, place.z - 0.15)
+      portalGroup.scale.setScalar(0.82)
       portalGroup.add(mesh)
 
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(place.s * 1.02, place.s * 1.16, 96),
-        new THREE.MeshBasicMaterial({
-          color: '#fef4af',
-          transparent: true,
-          opacity: 0,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      )
-      portalGroup.add(ring)
-
+      // Soft cobalt halo only (cream rim is SDF inside the portal shader)
       const halo = new THREE.Mesh(
-        new THREE.CircleGeometry(place.s * 1.22, 64),
+        new THREE.CircleGeometry(place.s * 1.18, 64),
         new THREE.MeshBasicMaterial({
           color: '#0047ab',
           transparent: true,
@@ -101,7 +98,7 @@ export class MemoriesWorld {
           depthWrite: false,
         }),
       )
-      halo.position.z = -0.05
+      halo.position.z = -0.04
       portalGroup.add(halo)
 
       this.group.add(portalGroup)
@@ -117,6 +114,8 @@ export class MemoriesWorld {
         videoBound: false,
         frameCanvas: null,
         frameCtx: null,
+        posterSrc: mem.poster,
+        hasContentFrame: false,
       })
     })
   }
@@ -130,27 +129,60 @@ export class MemoriesWorld {
     return webkit && !mobileSafari
   }
 
+  private paintImageToCanvas(p: Portal, img: CanvasImageSource): void {
+    if (!p.frameCtx || !p.frameCanvas) return
+    const w = p.frameCanvas.width
+    const h = p.frameCanvas.height
+    p.frameCtx.fillStyle = '#001a40'
+    p.frameCtx.fillRect(0, 0, w, h)
+    // Cover-fit into the square so faces aren't letterboxed
+    const iw = 'videoWidth' in img && (img as HTMLVideoElement).videoWidth
+      ? (img as HTMLVideoElement).videoWidth
+      : 'naturalWidth' in img
+        ? (img as HTMLImageElement).naturalWidth || w
+        : w
+    const ih = 'videoHeight' in img && (img as HTMLVideoElement).videoHeight
+      ? (img as HTMLVideoElement).videoHeight
+      : 'naturalHeight' in img
+        ? (img as HTMLImageElement).naturalHeight || h
+        : h
+    const scale = Math.max(w / Math.max(1, iw), h / Math.max(1, ih))
+    const dw = iw * scale
+    const dh = ih * scale
+    p.frameCtx.drawImage(img as CanvasImageSource, (w - dw) / 2, (h - dh) / 2, dw, dh)
+    p.texture.needsUpdate = true
+    p.hasContentFrame = true
+  }
+
+  private loadPoster(p: Portal): void {
+    if (!p.posterSrc || !p.frameCtx) return
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      // Don't overwrite a live video frame with the static poster
+      if (p.playing && p.video.readyState >= 2) return
+      this.paintImageToCanvas(p, img)
+    }
+    img.src = p.posterSrc
+  }
+
   /**
    * Bind video via CanvasTexture (drawImage blit). Avoids THREE.VideoTexture,
    * which hard-crashes Playwright WPE / some WebKit GPU paths.
+   * Always starts from a real poster frame — never a gradient/dot seed.
    */
   private bindVideoTexture(p: Portal): void {
     if (p.videoBound) return
     p.videoBound = true
     const canvas = document.createElement('canvas')
-    canvas.width = 256
-    canvas.height = 256
+    canvas.width = 512
+    canvas.height = 512
     const ctx = canvas.getContext('2d', { alpha: false })
     p.frameCanvas = canvas
     p.frameCtx = ctx
-    // Soft rose seed — also the permanent look on fragile WebKit (no media decode)
     if (ctx) {
-      const g = ctx.createRadialGradient(128, 128, 20, 128, 128, 140)
-      g.addColorStop(0, '#fef4af')
-      g.addColorStop(0.55, '#0047ab')
-      g.addColorStop(1, '#001a40')
-      ctx.fillStyle = g
-      ctx.fillRect(0, 0, 256, 256)
+      ctx.fillStyle = '#001a40'
+      ctx.fillRect(0, 0, 512, 512)
     }
     const ct = new THREE.CanvasTexture(canvas)
     ct.colorSpace = THREE.SRGBColorSpace
@@ -160,19 +192,61 @@ export class MemoriesWorld {
     p.texture = ct
     p.material.uniforms.uMap.value = ct
 
+    this.loadPoster(p)
+
     if (this.isFragileWebKit()) return
     const src = p.video.dataset.src
-    if (src) p.video.src = src
+    if (src) {
+      p.video.src = src
+      p.video.preload = 'auto'
+      const onReady = () => {
+        this.paintImageToCanvas(p, p.video)
+      }
+      p.video.addEventListener('loadeddata', onReady, { once: true })
+      p.video.addEventListener('seeked', onReady)
+      try {
+        p.video.load()
+        // Nudge first decode so poster→video swap happens before stills
+        p.video.currentTime = 0.05
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   private blitVideoFrame(p: Portal): void {
     if (!p.frameCtx || !p.frameCanvas || p.video.readyState < 2) return
     try {
-      p.frameCtx.drawImage(p.video, 0, 0, p.frameCanvas.width, p.frameCanvas.height)
-      p.texture.needsUpdate = true
+      this.paintImageToCanvas(p, p.video)
     } catch {
       /* decode / CORS */
     }
+  }
+
+  /** Remap portal rest poses for narrow viewports so nothing clips and the center isn't empty */
+  setAspect(aspect: number): void {
+    this.aspect = aspect
+    const narrow = aspect < 0.75
+    // Pull inward on 390px so all four sit fully on-screen in a tight balanced 2×2
+    const sx = narrow ? 0.68 : 1
+    const sy = narrow ? 0.78 : 1
+    const portalScale = narrow ? 0.82 : 1
+    this.portals.forEach((p, i) => {
+      const base = this.baseLayout[i]
+      p.rest.x = base.x * sx
+      p.rest.y = base.y * sy
+      p.rest.z = base.z
+      p.rest.s = base.s
+      if (this.entered) {
+        gsap.killTweensOf(p.group.position)
+        gsap.killTweensOf(p.group.scale)
+        p.group.position.set(p.rest.x, p.rest.y, p.rest.z)
+        p.group.scale.setScalar(portalScale)
+      } else {
+        p.group.position.set(p.rest.x * 0.9, p.rest.y * 0.9, p.rest.z - 0.15)
+        p.group.scale.setScalar(portalScale * 0.82)
+      }
+    })
   }
 
   layoutTargets(): Array<{ x: number; y: number; z: number; s: number }> {
@@ -198,7 +272,6 @@ export class MemoriesWorld {
     const ctx = canvas.getContext('2d', { willReadFrequently: true })
     return this.portals.map((p, portalIdx) => {
       const out = new Float32Array(perPortal * 3)
-      // Distinct saturated fallbacks per portal if decode isn't ready
       const fallbacks = [
         [0.95, 0.45, 0.25],
         [0.35, 0.65, 0.95],
@@ -213,16 +286,12 @@ export class MemoriesWorld {
       }
       if (!ctx) return out
       try {
-        if (p.video.readyState < 2) {
-          p.video.preload = 'auto'
-          p.video.load()
-          // Kick a frame if possible
-          void p.video.play().then(() => p.video.pause()).catch(() => undefined)
-        }
         const src: CanvasImageSource | null =
           p.video.readyState >= 2
             ? p.video
-            : (p.texture.image as CanvasImageSource | undefined) ?? null
+            : p.frameCanvas && p.hasContentFrame
+              ? p.frameCanvas
+              : (p.texture.image as CanvasImageSource | undefined) ?? null
         if (!src) return out
         ctx.clearRect(0, 0, 48, 48)
         ctx.drawImage(src as CanvasImageSource, 0, 0, 48, 48)
@@ -237,9 +306,7 @@ export class MemoriesWorld {
           const r = data[idx] / 255
           const g = data[idx + 1] / 255
           const b = data[idx + 2] / 255
-          // Skip near-black samples (empty portal / underexposed)
           if (r + g + b < 0.12) continue
-          // Slight saturation boost so colors survive particle blending
           const max = Math.max(r, g, b)
           const boost = max > 0.01 ? Math.min(1.35, 0.55 / max + 0.65) : 1
           out[wrote * 3] = Math.min(1, r * boost)
@@ -248,7 +315,7 @@ export class MemoriesWorld {
           wrote++
         }
       } catch {
-        // CORS / decode — keep saturated fallbacks
+        /* CORS / decode */
       }
       return out
     })
@@ -257,7 +324,6 @@ export class MemoriesWorld {
   playEntrance(): void {
     if (this.entered) return
     this.entered = true
-    // Bind textures (+ warm decode on capable browsers) once portals are on stage
     const fragile = this.isFragileWebKit()
     this.portals.forEach((p) => {
       this.bindVideoTexture(p)
@@ -270,41 +336,38 @@ export class MemoriesWorld {
       }
     })
     this.portals.forEach((p, i) => {
-      const extras = p.group.children.filter((c) => c instanceof THREE.Mesh && c !== p.mesh) as THREE.Mesh[]
-      const ring = extras.find((c) => (c.geometry as THREE.BufferGeometry)?.type === 'RingGeometry')
-      const halo = extras.find((c) => c !== ring)
+      const halo = p.group.children.find(
+        (c) => c instanceof THREE.Mesh && c !== p.mesh,
+      ) as THREE.Mesh | undefined
       gsap.to(p.group.position, {
         x: p.rest.x,
         y: p.rest.y,
         z: p.rest.z,
-        duration: 1.35,
-        delay: i * 0.08,
+        duration: 1.2,
+        delay: i * 0.07,
         ease: 'power3.out',
       })
+      const settle = this.aspect < 0.75 ? 0.82 : 1
       gsap.to(p.group.scale, {
-        x: 1,
-        y: 1,
-        z: 1,
-        duration: 1.25,
-        delay: i * 0.08,
+        x: settle,
+        y: settle,
+        z: settle,
+        duration: 1.1,
+        delay: i * 0.07,
         ease: 'power2.out',
       })
-      gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.85, delay: i * 0.08 })
-      if (ring) {
-        ;(ring.material as THREE.MeshBasicMaterial).color.set('#fef4af')
-        gsap.to(ring.material as THREE.MeshBasicMaterial, {
-          opacity: 0.95,
-          duration: 0.7,
-          delay: i * 0.08 + 0.05,
-        })
-      }
+      gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.75, delay: i * 0.07 })
+      gsap.to(p.material.uniforms.uRim, { value: 1, duration: 0.7, delay: i * 0.07 + 0.05 })
       if (halo) {
+        // Keep halo nearly invisible — cream SDF rim should dominate, not a blue glow
         gsap.to(halo.material as THREE.MeshBasicMaterial, {
-          opacity: 0.1,
-          duration: 0.9,
-          delay: i * 0.08 + 0.1,
+          opacity: 0.03,
+          duration: 0.85,
+          delay: i * 0.07 + 0.08,
         })
       }
+      // Autoplay muted so portals show real footage without requiring hover
+      window.setTimeout(() => this.play(p), fragile ? 0 : 180 + i * 90)
     })
   }
 
@@ -318,10 +381,9 @@ export class MemoriesWorld {
       tl.to(p.material.uniforms.uBoost, { value: 0.7, duration: 0.25 }, i * 0.04)
       tl.to(
         p.group.scale,
-        { x: 1.2, y: 1.2, z: 1.2, duration: 0.35, ease: 'power2.out' },
+        { x: 1.15, y: 1.15, z: 1.15, duration: 0.35, ease: 'power2.out' },
         i * 0.04,
       )
-      // Drift toward centre while shattering — readable mid-handoff motion
       tl.to(
         p.group.position,
         {
@@ -343,7 +405,7 @@ export class MemoriesWorld {
         { value: 0, duration: 1.6, ease: 'power2.in' },
         1.0 + i * 0.04,
       )
-      // Fade every child (rings/halos) so nothing remains on the finale
+      tl.to(p.material.uniforms.uRim, { value: 0, duration: 0.6, ease: 'power2.in' }, 0.85 + i * 0.04)
       p.group.children.forEach((child) => {
         if (child instanceof THREE.Mesh && child !== p.mesh) {
           const mat = child.material as THREE.MeshBasicMaterial
@@ -365,8 +427,9 @@ export class MemoriesWorld {
 
   private play(p: Portal): void {
     if (this.isFragileWebKit() || !p.video.src) {
+      // Poster already painted — treat as content-ready
       p.playing = true
-      p.material.uniforms.uBoost.value = 0.18
+      p.material.uniforms.uBoost.value = 0.08
       return
     }
     if (p.video.preload === 'none') {
@@ -375,8 +438,12 @@ export class MemoriesWorld {
     }
     void p.video.play().then(() => {
       p.playing = true
-      p.material.uniforms.uBoost.value = 0.18
-    }).catch(() => undefined)
+      p.material.uniforms.uBoost.value = 0.1
+      this.blitVideoFrame(p)
+    }).catch(() => {
+      // Autoplay blocked — still keep poster frame visible
+      this.blitVideoFrame(p)
+    })
   }
 
   private pause(p: Portal): void {
@@ -398,7 +465,10 @@ export class MemoriesWorld {
     const hit = hits[0]?.object
 
     if (mode === 'leave') {
-      this.portals.forEach((p) => this.pause(p))
+      // Keep ambient autoplay going — leave only clears hover boost
+      this.portals.forEach((p) => {
+        p.material.uniforms.uBoost.value = p.playing ? 0.1 : 0
+      })
       return null
     }
 
@@ -407,30 +477,38 @@ export class MemoriesWorld {
         if (p.mesh === hit) {
           if (p.playing) this.pause(p)
           else this.play(p)
-        } else {
-          this.pause(p)
         }
       })
       const active = this.portals.find((p) => p.mesh === hit)
       return active?.label ?? null
     }
 
-    // hover move (desktop)
     const canHover = window.matchMedia('(hover: hover)').matches
     if (!canHover) return null
     this.portals.forEach((p) => {
-      if (p.mesh === hit) this.play(p)
-      else this.pause(p)
+      if (p.mesh === hit) {
+        if (!p.playing) this.play(p)
+        p.material.uniforms.uBoost.value = 0.18
+      } else if (p.playing) {
+        p.material.uniforms.uBoost.value = 0.1
+      }
     })
     return this.portals.find((p) => p.mesh === hit)?.label ?? null
   }
 
   update(time: number): void {
     this.portals.forEach((p, i) => {
-      if (p.playing) this.blitVideoFrame(p)
+      // Blit whenever the decoder has frames — not only while "playing"
+      if (p.videoBound && p.video.readyState >= 2 && !p.video.paused) {
+        this.blitVideoFrame(p)
+      } else if (p.videoBound && p.video.readyState >= 2 && !p.hasContentFrame) {
+        this.blitVideoFrame(p)
+      }
       if (!this.entered) return
-      p.group.position.y += Math.sin(time * 0.5 + i) * 0.0006
-      const targetScale = p.playing ? 1.08 : 1
+      p.group.position.y += Math.sin(time * 0.5 + i) * 0.00055
+      const baseScale = this.aspect < 0.75 ? 0.82 : 1
+      const targetScale =
+        p.playing && p.material.uniforms.uBoost.value > 0.14 ? baseScale * 1.05 : baseScale
       const s = p.group.scale
       s.x += (targetScale - s.x) * 0.08
       s.y += (targetScale - s.y) * 0.08
@@ -450,5 +528,6 @@ export class MemoriesWorld {
       p.mesh.geometry.dispose()
       p.material.dispose()
     })
+    void this.loader
   }
 }

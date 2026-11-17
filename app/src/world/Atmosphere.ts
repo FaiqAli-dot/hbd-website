@@ -11,7 +11,8 @@ import { particleBudget } from '../utils/quality'
 /** Cobalt navy grounds + cream dust — shared across chapter crossfades */
 const PALETTES = {
   gallery: ['#000f28', '#001a40', '#0047ab'],
-  letter: ['#000f28', '#001a40', '#002a66'],
+  // Letter: brighter navy center → deep edge + cobalt glow (readable blue, not black)
+  letter: ['#000f28', '#002a66', '#0047ab'],
   memories: ['#000f28', '#002a66', '#0047ab'],
   finale: ['#000f28', '#001a40', '#002a66'],
 } as const

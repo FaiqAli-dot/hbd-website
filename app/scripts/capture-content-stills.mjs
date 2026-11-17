@@ -67,6 +67,22 @@ async function scrollToPanel(page, sel, offset = 40) {
   await page.evaluate((top) => window.scrollTo({ top, behavior: 'instant' }), y)
 }
 
+/** Drive ScrollTrigger chapter bands: letter <0.33, memories 0.33–0.66, finale >0.66 */
+async function scrollToProgress(page, progress) {
+  await page.evaluate((p) => {
+    const max = document.documentElement.scrollHeight - window.innerHeight
+    window.scrollTo({ top: Math.round(max * p), behavior: 'instant' })
+  }, progress)
+}
+
+async function awaitChapter(page, chapter, ms = 12000) {
+  await page.waitForFunction(
+    (ch) => document.documentElement.dataset.chapter === ch,
+    chapter,
+    { timeout: ms },
+  )
+}
+
 async function runDesktop() {
   const browser = await chromium.launch({
     headless: true,
@@ -90,19 +106,23 @@ async function runDesktop() {
   await shot(page, 't12-palette-ch2-letter-desktop')
 
   // Mid Ch2→Ch3 — catch portals mid-spread with cream rims (letter mostly gone)
-  await scrollToPanel(page, '#chapter-memories', -100)
-  await page.waitForTimeout(980)
+  await scrollToProgress(page, 0.36)
+  await awaitChapter(page, 'memories')
+  await page.waitForTimeout(900)
   await shot(page, 't12-mid-ch2-to-ch3')
-  await scrollToPanel(page, '#chapter-memories', 40)
-  await page.waitForTimeout(1600)
+  await scrollToProgress(page, 0.48)
+  await awaitChapter(page, 'memories')
+  // Posters + muted autoplay need a beat to blit into portal canvases
+  await page.waitForTimeout(2800)
   await shot(page, 't12-memories-desktop')
   await shot(page, 't12-palette-ch3-memories-desktop')
 
   // Mid Ch3→Ch4 — catch portals drawing inward + rose gather (not empty navy)
-  await scrollToPanel(page, '#chapter-finale', -100)
+  await scrollToProgress(page, 0.68)
   await page.waitForTimeout(380)
   await shot(page, 't12-mid-ch3-to-ch4')
-  await scrollToPanel(page, '#chapter-finale', 40)
+  await scrollToProgress(page, 0.82)
+  await awaitChapter(page, 'finale').catch(() => {})
   // Wait through handwriting + message reveal
   await page.waitForTimeout(15000)
   await shot(page, 't12-finale-message-desktop')
@@ -149,11 +169,16 @@ async function runMobile() {
   await page.waitForTimeout(500)
   await shot(page, 't12-letter-bottom-mobile')
 
-  await scrollToPanel(page, '#chapter-memories', 40)
-  await page.waitForTimeout(1400)
+  await scrollToProgress(page, 0.2)
+  await page.waitForTimeout(400)
+  await scrollToProgress(page, 0.48)
+  await awaitChapter(page, 'memories')
+  await page.waitForTimeout(2800)
   await shot(page, 't12-palette-ch3-memories-mobile')
+  await shot(page, 't12-memories-mobile')
 
-  await scrollToPanel(page, '#chapter-finale', 40)
+  await scrollToProgress(page, 0.82)
+  await awaitChapter(page, 'finale').catch(() => {})
   await page.waitForTimeout(14000)
   await shot(page, 't12-finale-message-mobile')
   await shot(page, 't12-palette-ch4-finale-mobile')

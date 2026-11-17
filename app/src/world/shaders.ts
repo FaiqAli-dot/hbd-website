@@ -68,15 +68,15 @@ varying vec2 vUv;
 void main() {
   vec2 uv = vUv;
   float t = uTime * 0.035;
-  // Soft radial wash only — no curved sine streak across letter copy
-  float wash = smoothstep(0.05, 0.95, uv.y);
-  vec3 col = mix(uColorA, uColorB, wash);
-  // Soft cobalt bloom in the mid field — keeps the field navy, not plum/black
-  float cobalt = 0.22 + 0.08 * sin(t * 0.6 + uv.y * 1.2 + uScroll * 0.35);
-  col = mix(col, uColorC, cobalt * (1.0 - length(uv - 0.5) * 0.85));
-  float vig = smoothstep(1.15, 0.3, length(uv - 0.5));
+  // Center #001A40-ish → edge #000F28 — readable navy, never pure black
+  float radial = 1.0 - smoothstep(0.05, 0.92, length(uv - 0.5));
+  vec3 col = mix(uColorA, uColorB, radial);
+  // Soft cobalt bloom in the mid field
+  float cobalt = 0.18 + 0.1 * sin(t * 0.55 + uv.y * 1.1 + uScroll * 0.3);
+  col = mix(col, uColorC, cobalt * radial);
+  float vig = smoothstep(1.18, 0.34, length(uv - 0.5));
   // Vignette toward deep navy (uColorA), never multiply toward absolute black
-  col = mix(uColorA * 0.95, col, vig);
+  col = mix(uColorA, col, vig);
   gl_FragColor = vec4(col, 1.0);
 }
 `
@@ -162,14 +162,24 @@ uniform sampler2D uMap;
 uniform float uSoft;
 uniform float uBoost;
 uniform float uOpacity;
+uniform float uRim;
 varying vec2 vUv;
 void main() {
   vec2 uv = vUv * 2.0 - 1.0;
   float r = length(uv);
-  float mask = 1.0 - smoothstep(1.0 - uSoft, 1.0, r);
+  // Soft AA disc edge via smoothstep (supersample-like falloff)
+  float edge0 = 1.0 - max(uSoft, 0.035);
+  float mask = 1.0 - smoothstep(edge0, 1.0, r);
   if (mask < 0.01) discard;
   vec4 tex = texture2D(uMap, vUv);
-  gl_FragColor = vec4(tex.rgb * (1.0 + uBoost), mask * uOpacity);
+  vec3 col = tex.rgb * (1.0 + uBoost);
+  // Hairline cream SDF rim + whisper glow — thin, AA'd, never a chunky band
+  float rimBand = smoothstep(0.94, 0.962, r) * (1.0 - smoothstep(0.978, 0.995, r));
+  float rimGlow = smoothstep(0.91, 0.95, r) * (1.0 - smoothstep(0.98, 1.02, r));
+  vec3 cream = vec3(0.996, 0.957, 0.686);
+  col = mix(col, cream, rimBand * uRim * 0.7);
+  col = mix(col, cream, rimGlow * uRim * 0.18);
+  gl_FragColor = vec4(col, mask * uOpacity);
 }
 `
 

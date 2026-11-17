@@ -24,6 +24,11 @@ import video02 from '../assets/videos/memories/02.mp4'
 import video03 from '../assets/videos/memories/03.mp4'
 import video04 from '../assets/videos/memories/04.mp4'
 
+import poster01 from '../assets/images/memories/poster-01.jpg'
+import poster02 from '../assets/images/memories/poster-02.jpg'
+import poster03 from '../assets/images/memories/poster-03.jpg'
+import poster04 from '../assets/images/memories/poster-04.jpg'
+
 import ambient from '../assets/audio/ambient.mp3'
 import reveal from '../assets/audio/reveal.mp3'
 import transition from '../assets/audio/transition.mp3'
@@ -186,24 +191,28 @@ export const memoryVideos: MemoryVideo[] = [
   {
     id: 'm1',
     src: video01,
+    poster: poster01,
     caption: 'Golden hour, slow bloom',
     label: 'Spring',
   },
   {
     id: 'm2',
     src: video02,
+    poster: poster02,
     caption: 'Mountains holding the sky',
     label: 'Wander',
   },
   {
     id: 'm3',
     src: video03,
+    poster: poster03,
     caption: 'Light across open land',
     label: 'Horizon',
   },
   {
     id: 'm4',
     src: video04,
+    poster: poster04,
     caption: 'Dusk settling soft',
     label: 'Dusk',
   },
