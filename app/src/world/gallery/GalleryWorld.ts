@@ -314,7 +314,7 @@ export class GalleryWorld {
       blending: THREE.AdditiveBlending,
       uniforms: { uLit: { value: 0 }, uTime: { value: 0 } },
       vertexShader: `varying vec2 vUv; varying float vD; void main(){vUv=uv; vec4 mv=modelViewMatrix*vec4(position,1.); vD=-mv.z; gl_Position=projectionMatrix*mv;}`,
-      fragmentShader: `varying vec2 vUv; varying float vD; uniform float uLit; uniform float uTime; void main(){ float lit=smoothstep(uLit+0.004,uLit-0.004,vUv.x); float spark=smoothstep(0.012,0.,abs(vUv.x-uLit))*1.4; float a=mix(.10,.55,lit)+spark; a*=exp(-pow(.03*vD,2.))*smoothstep(4.6,8.5,vD); gl_FragColor=vec4(vec3(.95,.78,.62)*a,1.);}`,
+      fragmentShader: `varying vec2 vUv; varying float vD; uniform float uLit; uniform float uTime; void main(){ float lit=smoothstep(uLit+0.004,uLit-0.004,vUv.x); float spark=smoothstep(0.012,0.,abs(vUv.x-uLit))*1.4; float a=mix(.10,.55,lit)+spark; a*=exp(-pow(.03*vD,2.))*smoothstep(4.6,8.5,vD); gl_FragColor=vec4(vec3(.996,.957,.686)*a,1.);}`,
     })
     this.group.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 800, 0.0055, 6, false), this.threadMat))
     this.threadU = this.photos.map((_, i) => {
@@ -324,7 +324,7 @@ export class GalleryWorld {
   }
 
   private buildAtmosphere(BG: THREE.Color): void {
-    // Soft plum wash at the far end — never a bright white hotspot
+    // Soft cobalt wash at the far end — never a bright white hotspot
     {
       const m = new THREE.ShaderMaterial({
         depthWrite: false,
@@ -332,7 +332,7 @@ export class GalleryWorld {
         blending: THREE.NormalBlending,
         fog: false,
         vertexShader: `varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-        fragmentShader: `varying vec2 vUv; void main(){ vec2 d=(vUv-vec2(.5,.47))*vec2(1.7,1.); float r=length(d); float a=exp(-r*r*3.5)*.55; vec3 c=vec3(.12,.05,.08); gl_FragColor=vec4(c,a);}`,
+        fragmentShader: `varying vec2 vUv; void main(){ vec2 d=(vUv-vec2(.5,.47))*vec2(1.7,1.); float r=length(d); float a=exp(-r*r*3.5)*.55; vec3 c=vec3(.02,.08,.22); gl_FragColor=vec4(c,a);}`,
       })
       const pl = new THREE.Mesh(new THREE.PlaneGeometry(160, 90), m)
       pl.position.set(-1, 0, -70)
