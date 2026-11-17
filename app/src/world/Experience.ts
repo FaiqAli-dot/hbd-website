@@ -361,6 +361,15 @@ export class Experience {
     return { ...this.gallery.getDragState(), convention: 'drag-world' }
   }
 
+  /** Test/capture helper — scrub letter stage clean of discs/thread */
+  forceCleanLetterStage(): void {
+    this.letter.retireForReading()
+    this.letter.group.visible = false
+    this.gallery.hideForLetter()
+    this.atmosphere.dust.visible = false
+    this.memories.group.visible = this.chapter === 'memories' || this.chapter === 'finale'
+  }
+
   private bindGyro(): void {
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.beta == null || e.gamma == null) return
@@ -705,7 +714,9 @@ export class Experience {
     }
 
     // Soft bloom/exposure crossfade — no hard pop between chapters
-    const bloomTarget = chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : 0.9
+    // Keep letter bloom low so soft edges don't read as grey portal rings
+    const bloomTarget =
+      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.35 : 0.7
     const exposureTarget = chapter === 'finale' ? 0.88 : 1.0
     if (prefersReducedMotion()) {
       this.post.setBloomMul(bloomTarget)
@@ -728,31 +739,43 @@ export class Experience {
 
     if (chapter === 'letter' && !this.transitionFlags.toLetter) {
       this.transitionFlags.toLetter = true
-      this.letter.group.visible = true
+      // Memories stay fully off until Ch3 — never peek through the letter
+      this.memories.group.visible = false
+      this.atmosphere.dust.visible = false
       const targets = this.letter.getDiscWorldTargets()
-      const handoff = this.gallery.getSettledHandoff()
-      // Ch1→Ch2: collage drifts into plum haze as letter paper rises
-      this.letter.playContinuousFromPhotos(handoff)
+      // Ch1→Ch2: gallery planes morph away; letter discs stay off-camera for reading
+      // (faces only return as Ch3 portals after the letter has left)
+      this.letter.retireForReading()
+      this.letter.group.visible = false
       if (!prefersReducedMotion()) {
         this.gallery.morphIntoLetter(targets)
+        window.setTimeout(() => this.gallery.hideForLetter(), 1100)
+      } else {
+        this.gallery.hideForLetter()
       }
-      // Slight delay so paper rise overlaps camera pull-back into letter field
       window.setTimeout(
         () => this.revealLetterText(),
-        prefersReducedMotion() ? 0 : 280,
+        prefersReducedMotion() ? 0 : 420,
       )
+      // Hard guarantee: no discs / thread / dust over readable letter copy
+      window.setTimeout(() => {
+        this.letter.retireForReading()
+        this.letter.group.visible = false
+        this.gallery.hideForLetter()
+        this.atmosphere.dust.visible = false
+      }, prefersReducedMotion() ? 0 : 900)
     }
 
     if (chapter === 'memories' && !this.transitionFlags.toMemories) {
       this.transitionFlags.toMemories = true
+      this.letter.retireForReading()
+      this.letter.group.visible = false
+      this.gallery.hideForLetter()
       this.memories.group.visible = true
-      // Ch2→Ch3: letter soft-recedes while portals emerge (overlapping dissolve)
-      if (!prefersReducedMotion()) {
-        this.letter.expandTowardPortals(this.memories.layoutTargets())
-      }
+      // Ch2→Ch3: portals alone emerge into separated layout (no giant letter rims)
       window.setTimeout(
         () => this.memories.playEntrance(),
-        prefersReducedMotion() ? 0 : 180,
+        prefersReducedMotion() ? 0 : 80,
       )
     }
 
@@ -761,16 +784,16 @@ export class Experience {
       this.finale.group.visible = true
       const worldPos = this.memories.getWorldPositions()
       const colors = this.memories.samplePortalColors(128)
-      // Ch3→Ch4: portals converge/dim into dark-rose finale — overlapped with dissolve
+      // Ch3→Ch4: portals draw inward as rose particles gather — overlap, no blank navy
       this.finale.playFromPortals(worldPos, colors)
       this.memories.dissolve()
       this.letter.dissolveForFinale()
-      // Delayed hide after crossfade completes — no black frame mid-transition
+      // Keep portals/particles on stage through the gather so mid-frames aren't empty
       window.setTimeout(() => {
         this.letter.group.visible = false
         this.memories.group.visible = false
         this.gallery.group.visible = false
-      }, 1800)
+      }, 3200)
     }
   }
 

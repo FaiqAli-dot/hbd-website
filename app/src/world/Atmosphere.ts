@@ -10,9 +10,9 @@ import { particleBudget } from '../utils/quality'
 
 /** Cobalt navy grounds + cream dust — shared across chapter crossfades */
 const PALETTES = {
-  gallery: ['#000f28', '#001a40', '#002a66'],
-  letter: ['#00101f', '#001a40', '#003980'],
-  memories: ['#000c20', '#001838', '#0047ab'],
+  gallery: ['#000f28', '#001a40', '#0047ab'],
+  letter: ['#000f28', '#001a40', '#002a66'],
+  memories: ['#000f28', '#002a66', '#0047ab'],
   finale: ['#000f28', '#001a40', '#002a66'],
 } as const
 
@@ -95,9 +95,20 @@ export class Atmosphere {
     this.targetA.set(a)
     this.targetB.set(b)
     this.targetC.set(c)
-    this.dustSizeTarget = chapter === 'finale' ? 12 : chapter === 'gallery' ? 36 : 42
-    this.dustVisibleTarget = chapter !== 'finale'
+    // Snap letter/finale grounds so mid-frames never linger on plum leftovers
+    if (chapter === 'letter' || chapter === 'memories') {
+      this.colorA.copy(this.targetA)
+      this.colorB.copy(this.targetB)
+      this.colorC.copy(this.targetC)
+      this.bgMat.uniforms.uColorA.value.copy(this.colorA)
+      this.bgMat.uniforms.uColorB.value.copy(this.colorB)
+      this.bgMat.uniforms.uColorC.value.copy(this.colorC)
+    }
+    this.dustSizeTarget =
+      chapter === 'finale' ? 10 : chapter === 'letter' ? 0 : chapter === 'gallery' ? 36 : 28
+    this.dustVisibleTarget = chapter !== 'finale' && chapter !== 'letter'
     if (this.dustVisibleTarget) this.dust.visible = true
+    else this.dust.visible = false
   }
 
   update(time: number, scroll: number): void {
@@ -112,7 +123,7 @@ export class Atmosphere {
 
     const size = this.dustMat.uniforms.uSize.value as number
     this.dustMat.uniforms.uSize.value = size + (this.dustSizeTarget - size) * 0.06
-    if (!this.dustVisibleTarget && size < 14) this.dust.visible = false
+    if (!this.dustVisibleTarget) this.dust.visible = false
 
     this.bgMat.uniforms.uTime.value = time
     this.bgMat.uniforms.uScroll.value = scroll

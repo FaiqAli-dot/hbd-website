@@ -119,12 +119,20 @@ html.gallery-complete .webgl-canvas {
 .site-chrome {
   position: fixed;
   inset: 0 0 auto;
-  z-index: 40;
+  z-index: 60;
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  padding: 1.1rem 1.4rem;
+  align-items: flex-start;
+  padding: 1.1rem 1.4rem 3.4rem;
+  min-height: 5.6rem;
   pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 15, 40, 1) 0%,
+    rgba(0, 15, 40, 0.97) 42%,
+    rgba(0, 15, 40, 0.72) 68%,
+    rgba(0, 15, 40, 0) 100%
+  );
 }
 
 .site-brand {
@@ -350,6 +358,7 @@ html.gallery-complete .webgl-canvas {
 .finale-overlay {
   position: fixed;
   inset: 0;
+  z-index: 30;
   display: grid;
   place-items: center;
   padding: 5rem 1.25rem 4rem;
@@ -372,7 +381,11 @@ html.gallery-complete .webgl-canvas {
 /* Soft exit drift once a later chapter owns the stage (overlapping crossfade) */
 html[data-chapter='memories'] .letter-overlay,
 html[data-chapter='finale'] .letter-overlay {
-  transform: translateY(-14px) scale(0.98);
+  opacity: 0;
+  transform: translateY(-18px) scale(0.975);
+  transition:
+    opacity 0.85s var(--ease-out),
+    transform 0.95s var(--ease-out);
 }
 
 html[data-chapter='finale'] .memories-overlay {
@@ -437,12 +450,46 @@ html.gallery-complete .gallery-hud .hand {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
-  padding-top: max(4.5rem, env(safe-area-inset-top, 0px) + 3.5rem);
+  padding-top: max(6.2rem, env(safe-area-inset-top, 0px) + 5.1rem);
   padding-bottom: max(5rem, env(safe-area-inset-bottom, 0px) + 4rem);
+  /* Soft dissolve under fixed FOR YOU / SOUND OFF chrome */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2.2rem,
+    #000 5.5rem,
+    #000 calc(100% - 1.5rem),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 2.2rem,
+    #000 5.5rem,
+    #000 calc(100% - 1.5rem),
+    transparent 100%
+  );
 }
 
 .letter-overlay.is-active {
   pointer-events: auto;
+}
+
+.letter-overlay.is-active::before {
+  content: '';
+  position: sticky;
+  top: 0;
+  display: block;
+  height: max(5.8rem, env(safe-area-inset-top, 0px) + 4.8rem);
+  margin-bottom: -5.8rem;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 15, 40, 1) 0%,
+    rgba(0, 15, 40, 0.92) 45%,
+    rgba(0, 15, 40, 0) 100%
+  );
+  pointer-events: none;
+  z-index: 5;
 }
 
 .letter__eyebrow {

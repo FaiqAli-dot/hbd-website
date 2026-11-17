@@ -82,26 +82,29 @@ async function runDesktop() {
   await page.waitForTimeout(700)
   await shot(page, 't12-mid-ch1-to-ch2')
   await scrollToPanel(page, '#chapter-letter', 40)
-  await page.waitForTimeout(1100)
+  // Wait until letter discs + gallery are fully retired (no faces / streaks over copy)
+  await page.waitForTimeout(3200)
+  await page.evaluate(() => window.__hbd?.forceCleanLetterStage?.())
+  await page.waitForTimeout(200)
   await shot(page, 't12-letter-desktop')
   await shot(page, 't12-palette-ch2-letter-desktop')
 
-  // Mid Ch2→Ch3
-  await scrollToPanel(page, '#chapter-memories', -220)
-  await page.waitForTimeout(900)
+  // Mid Ch2→Ch3 — catch portals mid-spread with cream rims (letter mostly gone)
+  await scrollToPanel(page, '#chapter-memories', -100)
+  await page.waitForTimeout(980)
   await shot(page, 't12-mid-ch2-to-ch3')
   await scrollToPanel(page, '#chapter-memories', 40)
-  await page.waitForTimeout(1400)
+  await page.waitForTimeout(1600)
   await shot(page, 't12-memories-desktop')
   await shot(page, 't12-palette-ch3-memories-desktop')
 
-  // Mid Ch3→Ch4
-  await scrollToPanel(page, '#chapter-finale', -260)
-  await page.waitForTimeout(900)
+  // Mid Ch3→Ch4 — catch portals drawing inward + rose gather (not empty navy)
+  await scrollToPanel(page, '#chapter-finale', -100)
+  await page.waitForTimeout(380)
   await shot(page, 't12-mid-ch3-to-ch4')
   await scrollToPanel(page, '#chapter-finale', 40)
   // Wait through handwriting + message reveal
-  await page.waitForTimeout(14000)
+  await page.waitForTimeout(15000)
   await shot(page, 't12-finale-message-desktop')
   await shot(page, 't12-palette-ch4-finale-desktop')
 
@@ -125,8 +128,10 @@ async function runMobile() {
 
   await shot(page, 't12-palette-ch1-gallery-mobile')
   await scrollToPanel(page, '#chapter-letter', 40)
-  await page.waitForTimeout(1200)
-  // Letter top
+  await page.waitForTimeout(3200)
+  await page.evaluate(() => window.__hbd?.forceCleanLetterStage?.())
+  await page.waitForTimeout(200)
+  // Letter top — discs must already be retired
   await page.evaluate(() => {
     const el = document.querySelector('[data-letter-overlay]')
     if (el) el.scrollTop = 0
@@ -136,6 +141,7 @@ async function runMobile() {
   await shot(page, 't12-palette-ch2-letter-mobile')
 
   // Letter bottom — scroll overlay to end
+  await page.evaluate(() => window.__hbd?.forceCleanLetterStage?.())
   await page.evaluate(() => {
     const el = document.querySelector('[data-letter-overlay]')
     if (el) el.scrollTop = el.scrollHeight

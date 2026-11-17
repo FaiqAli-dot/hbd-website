@@ -68,11 +68,15 @@ varying vec2 vUv;
 void main() {
   vec2 uv = vUv;
   float t = uTime * 0.035;
-  float wash = smoothstep(0.0, 1.0, uv.y + sin(uv.x * 2.5 + t) * 0.1);
+  // Soft radial wash only — no curved sine streak across letter copy
+  float wash = smoothstep(0.05, 0.95, uv.y);
   vec3 col = mix(uColorA, uColorB, wash);
-  col = mix(col, uColorC, 0.2 + 0.2 * sin(t + uv.x * 1.8 + uScroll));
-  float vignette = smoothstep(1.15, 0.3, length(uv - 0.5));
-  col *= vignette;
+  // Soft cobalt bloom in the mid field — keeps the field navy, not plum/black
+  float cobalt = 0.22 + 0.08 * sin(t * 0.6 + uv.y * 1.2 + uScroll * 0.35);
+  col = mix(col, uColorC, cobalt * (1.0 - length(uv - 0.5) * 0.85));
+  float vig = smoothstep(1.15, 0.3, length(uv - 0.5));
+  // Vignette toward deep navy (uColorA), never multiply toward absolute black
+  col = mix(uColorA * 0.95, col, vig);
   gl_FragColor = vec4(col, 1.0);
 }
 `
@@ -124,7 +128,9 @@ void main() {
   float dist = distance(vUv, vec2(0.5));
   float vig = smoothstep(0.95, 0.32, dist);
   float grain = fract(sin(dot(vUv * (uTime + 20.0), vec2(12.9898, 78.233))) * 43758.5453);
-  color.rgb *= mix(1.0 - uIntensity, 1.0, vig);
+  // Soften toward navy (#000f28), never multiply into plum/black
+  vec3 navy = vec3(0.0, 0.059, 0.157);
+  color.rgb = mix(mix(color.rgb, navy, uIntensity * 0.85), color.rgb, vig);
   color.rgb += (grain - 0.5) * uGrain;
   gl_FragColor = color;
 }

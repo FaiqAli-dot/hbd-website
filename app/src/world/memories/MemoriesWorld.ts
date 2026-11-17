@@ -29,10 +29,10 @@ export class MemoriesWorld {
     this.group.position.set(0, 0, -42)
 
     const layout = [
-      { x: -2.4, y: 0.9, z: 0.6, s: 1.15 },
-      { x: 2.2, y: 1.15, z: -0.3, s: 1.25 },
-      { x: -1.7, y: -1.0, z: 0.2, s: 1.05 },
-      { x: 2.0, y: -0.85, z: 0.9, s: 1.2 },
+      { x: -3.1, y: 1.25, z: 0.6, s: 1.2 },
+      { x: 3.0, y: 1.35, z: -0.3, s: 1.3 },
+      { x: -2.6, y: -1.35, z: 0.2, s: 1.1 },
+      { x: 2.7, y: -1.2, z: 0.9, s: 1.25 },
     ]
 
     memoryVideos.forEach((mem, i) => {
@@ -75,27 +75,29 @@ export class MemoriesWorld {
 
       const mesh = new THREE.Mesh(new THREE.CircleGeometry(place.s, 64), material)
       const portalGroup = new THREE.Group()
-      portalGroup.position.set(place.x * 0.2, place.y * 0.2, place.z - 2)
-      portalGroup.scale.setScalar(0.15)
+      // Start already near rest so mid-entrance reads as a spread, not a stacked clump
+      portalGroup.position.set(place.x * 0.94, place.y * 0.94, place.z - 0.2)
+      portalGroup.scale.setScalar(0.78)
       portalGroup.add(mesh)
 
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(place.s * 1.02, place.s * 1.12, 64),
+        new THREE.RingGeometry(place.s * 1.02, place.s * 1.16, 96),
         new THREE.MeshBasicMaterial({
           color: '#fef4af',
           transparent: true,
-          opacity: 0.28,
+          opacity: 0,
           side: THREE.DoubleSide,
+          depthWrite: false,
         }),
       )
       portalGroup.add(ring)
 
       const halo = new THREE.Mesh(
-        new THREE.CircleGeometry(place.s * 1.35, 64),
+        new THREE.CircleGeometry(place.s * 1.22, 64),
         new THREE.MeshBasicMaterial({
           color: '#0047ab',
           transparent: true,
-          opacity: 0.12,
+          opacity: 0,
           depthWrite: false,
         }),
       )
@@ -268,23 +270,41 @@ export class MemoriesWorld {
       }
     })
     this.portals.forEach((p, i) => {
+      const extras = p.group.children.filter((c) => c instanceof THREE.Mesh && c !== p.mesh) as THREE.Mesh[]
+      const ring = extras.find((c) => (c.geometry as THREE.BufferGeometry)?.type === 'RingGeometry')
+      const halo = extras.find((c) => c !== ring)
       gsap.to(p.group.position, {
         x: p.rest.x,
         y: p.rest.y,
         z: p.rest.z,
-        duration: 1.55,
-        delay: i * 0.12,
+        duration: 1.35,
+        delay: i * 0.08,
         ease: 'power3.out',
       })
       gsap.to(p.group.scale, {
         x: 1,
         y: 1,
         z: 1,
-        duration: 1.4,
-        delay: i * 0.12,
+        duration: 1.25,
+        delay: i * 0.08,
         ease: 'power2.out',
       })
-      gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 1.05, delay: i * 0.12 + 0.08 })
+      gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.85, delay: i * 0.08 })
+      if (ring) {
+        ;(ring.material as THREE.MeshBasicMaterial).color.set('#fef4af')
+        gsap.to(ring.material as THREE.MeshBasicMaterial, {
+          opacity: 0.95,
+          duration: 0.7,
+          delay: i * 0.08 + 0.05,
+        })
+      }
+      if (halo) {
+        gsap.to(halo.material as THREE.MeshBasicMaterial, {
+          opacity: 0.1,
+          duration: 0.9,
+          delay: i * 0.08 + 0.1,
+        })
+      }
     })
   }
 
@@ -295,51 +315,51 @@ export class MemoriesWorld {
   dissolve(): gsap.core.Timeline {
     const tl = gsap.timeline()
     this.portals.forEach((p, i) => {
-      tl.to(p.material.uniforms.uBoost, { value: 0.55, duration: 0.2 }, i * 0.05)
+      tl.to(p.material.uniforms.uBoost, { value: 0.7, duration: 0.25 }, i * 0.04)
       tl.to(
         p.group.scale,
-        { x: 1.15, y: 1.15, z: 1.15, duration: 0.28, ease: 'power2.out' },
-        i * 0.05,
+        { x: 1.2, y: 1.2, z: 1.2, duration: 0.35, ease: 'power2.out' },
+        i * 0.04,
       )
-      // Drift toward finale while shattering into particles
+      // Drift toward centre while shattering — readable mid-handoff motion
       tl.to(
         p.group.position,
         {
-          z: p.rest.z - 14,
-          x: p.rest.x * 0.35,
-          y: p.rest.y * 0.35,
-          duration: 1.35,
+          z: p.rest.z - 8,
+          x: p.rest.x * 0.12,
+          y: p.rest.y * 0.12,
+          duration: 1.85,
           ease: 'power2.in',
         },
-        0.12 + i * 0.05,
+        0.05 + i * 0.04,
       )
       tl.to(
         p.group.scale,
-        { x: 0.02, y: 0.02, z: 0.02, duration: 1.25, ease: 'power3.in' },
-        0.2 + i * 0.05,
+        { x: 0.12, y: 0.12, z: 0.12, duration: 2.0, ease: 'power3.in' },
+        0.7 + i * 0.04,
       )
       tl.to(
         p.material.uniforms.uOpacity,
-        { value: 0, duration: 0.95, ease: 'power2.in' },
-        0.45 + i * 0.05,
+        { value: 0, duration: 1.6, ease: 'power2.in' },
+        1.0 + i * 0.04,
       )
       // Fade every child (rings/halos) so nothing remains on the finale
       p.group.children.forEach((child) => {
         if (child instanceof THREE.Mesh && child !== p.mesh) {
           const mat = child.material as THREE.MeshBasicMaterial
           if (mat?.opacity != null) {
-            tl.to(mat, { opacity: 0, duration: 0.4, ease: 'power2.in' }, 0.2 + i * 0.05)
+            tl.to(mat, { opacity: 0, duration: 0.7, ease: 'power2.in' }, 0.85 + i * 0.05)
           }
         }
       })
       tl.add(() => {
         this.pause(p)
         p.group.visible = false
-      }, 1.2 + i * 0.05)
+      }, 2.1 + i * 0.05)
     })
     tl.add(() => {
       this.group.visible = false
-    }, 1.6)
+    }, 2.5)
     return tl
   }
 

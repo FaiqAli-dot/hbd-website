@@ -176,27 +176,43 @@ export class FinaleWorld {
     this.played = true
     sound.play('finale', 0.45)
 
-    // Seed particles at portal locations in world space (relative to finale group)
+    // Seed particles from portals + a dense centre rose cloud so mid-handoff is never blank
     const pos = this.startPositions
     const nPortals = Math.max(1, portalWorldPositions.length)
+    const sizAttr = this.points.geometry.getAttribute('size') as THREE.BufferAttribute
     for (let i = 0; i < this.count; i++) {
-      const p = portalWorldPositions[i % nPortals]
-      pos[i * 3] = p.x - this.group.position.x + (Math.random() - 0.5) * 0.8
-      pos[i * 3 + 1] = p.y - this.group.position.y + (Math.random() - 0.5) * 0.8
-      pos[i * 3 + 2] = p.z - this.group.position.z + (Math.random() - 0.5) * 0.4
+      const usePortal = i % 3 !== 0
+      if (usePortal) {
+        const p = portalWorldPositions[i % nPortals]
+        pos[i * 3] = p.x - this.group.position.x + (Math.random() - 0.5) * 1.4
+        pos[i * 3 + 1] = p.y - this.group.position.y + (Math.random() - 0.5) * 1.4
+        pos[i * 3 + 2] = p.z - this.group.position.z + (Math.random() - 0.5) * 0.8
+      } else {
+        // Centre bloom in finale camera space — visible rose ink from first frame
+        pos[i * 3] = (Math.random() - 0.5) * 4.2
+        pos[i * 3 + 1] = (Math.random() - 0.5) * 2.8
+        pos[i * 3 + 2] = (Math.random() - 0.5) * 1.4
+      }
+      // Prefer rose ink for the gather beat — portal samples only tint lightly
+      const rose = new THREE.Color(PALETTE[i % PALETTE.length])
       const portalCol = portalColors?.[i % nPortals]
       if (portalCol && portalCol.length >= 3) {
         const ci = (i * 3) % Math.max(3, portalCol.length - 2)
-        // Blend portal sample toward soft rose
-        this.colors[i * 3] = portalCol[ci] * 0.35 + 0.95 * 0.65
-        this.colors[i * 3 + 1] = portalCol[ci + 1] * 0.35 + 0.78 * 0.65
-        this.colors[i * 3 + 2] = portalCol[ci + 2] * 0.35 + 0.82 * 0.65
+        this.colors[i * 3] = portalCol[ci] * 0.12 + rose.r * 0.88
+        this.colors[i * 3 + 1] = portalCol[ci + 1] * 0.12 + rose.g * 0.88
+        this.colors[i * 3 + 2] = portalCol[ci + 2] * 0.12 + rose.b * 0.88
+      } else {
+        this.colors[i * 3] = rose.r
+        this.colors[i * 3 + 1] = rose.g
+        this.colors[i * 3 + 2] = rose.b
       }
       const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
-      alp.setX(i, 0.55)
+      alp.setX(i, 0.85)
+      sizAttr.setX(i, 6 + Math.random() * 10)
       this.age[i] = 0
-      this.life[i] = 4
+      this.life[i] = 5
     }
+    sizAttr.needsUpdate = true
     this.points.geometry.attributes.position.needsUpdate = true
     this.points.geometry.attributes.color.needsUpdate = true
     this.points.geometry.attributes.aAlpha.needsUpdate = true
@@ -213,26 +229,27 @@ export class FinaleWorld {
 
     this.morphing = true
     this.morph.t = 0
+    // Longer gather so mid Ch3→Ch4 frames always show inward motion
     gsap.to(this.morph, {
       t: 1,
-      duration: 1.05,
+      duration: 1.55,
       ease: 'power3.inOut',
       onUpdate: () => this.applyGather(),
       onComplete: () => {
-        // Dissolve the gathered cloud completely — portals are gone
+        // Softly clear the gather while handwriting mounts — no empty navy beat
+        this.mountAndWrite()
         gsap.to(this.morph, {
           t: 0,
-          duration: 0.45,
+          duration: 0.7,
           ease: 'power2.in',
           onUpdate: () => {
             const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
-            for (let i = 0; i < this.count; i++) alp.setX(i, Math.max(0, alp.getX(i) * 0.82))
+            for (let i = 0; i < this.count; i++) alp.setX(i, Math.max(0, alp.getX(i) * 0.88))
             alp.needsUpdate = true
           },
           onComplete: () => {
             this.clearParticles()
             this.morphing = false
-            this.mountAndWrite()
           },
         })
       },
@@ -258,16 +275,18 @@ export class FinaleWorld {
     for (let i = 0; i < this.count; i++) {
       const ix = i * 3
       const ang = t * 3.6 + i * 0.09
-      const radius = (1 - t) * (1.6 + (i % 7) * 0.4)
-      const tx = target.x + Math.cos(ang) * radius * 0.22
-      const ty = target.y + Math.sin(ang * 1.2) * radius * 0.14
-      const tz = target.z + (1 - t) * ((i % 5) - 2) * 0.06
-      posAttr.array[ix] += (tx - posAttr.array[ix]) * (0.1 + t * 0.22)
-      posAttr.array[ix + 1] += (ty - posAttr.array[ix + 1]) * (0.1 + t * 0.22)
-      posAttr.array[ix + 2] += (tz - posAttr.array[ix + 2]) * (0.1 + t * 0.22)
-      // Stay dim — never pile into a white hotspot
-      alp.setX(i, 0.12 + 0.22 * t)
-      siz.setX(i, 1.4 + this.rnd() * 2.2)
+      // Keep a wide readable spiral early, tighten late — mid-handoff stays busy
+      const radius = (1 - t * 0.82) * (2.4 + (i % 7) * 0.55)
+      const tx = target.x + Math.cos(ang) * radius * 0.55
+      const ty = target.y + Math.sin(ang * 1.2) * radius * 0.38
+      const tz = target.z + (1 - t) * ((i % 5) - 2) * 0.1
+      posAttr.array[ix] += (tx - posAttr.array[ix]) * (0.08 + t * 0.18)
+      posAttr.array[ix + 1] += (ty - posAttr.array[ix + 1]) * (0.08 + t * 0.18)
+      posAttr.array[ix + 2] += (tz - posAttr.array[ix + 2]) * (0.08 + t * 0.18)
+      // Bright enough to read as rose ink streaming inward — never blank navy
+      const pulse = 0.55 + 0.3 * Math.sin(t * Math.PI)
+      alp.setX(i, pulse)
+      siz.setX(i, 3.2 + this.rnd() * 4.8)
     }
     posAttr.needsUpdate = true
     alp.needsUpdate = true

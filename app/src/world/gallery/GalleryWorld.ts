@@ -314,7 +314,7 @@ export class GalleryWorld {
       blending: THREE.AdditiveBlending,
       uniforms: { uLit: { value: 0 }, uTime: { value: 0 } },
       vertexShader: `varying vec2 vUv; varying float vD; void main(){vUv=uv; vec4 mv=modelViewMatrix*vec4(position,1.); vD=-mv.z; gl_Position=projectionMatrix*mv;}`,
-      fragmentShader: `varying vec2 vUv; varying float vD; uniform float uLit; uniform float uTime; void main(){ float lit=smoothstep(uLit+0.004,uLit-0.004,vUv.x); float spark=smoothstep(0.012,0.,abs(vUv.x-uLit))*1.4; float a=mix(.10,.55,lit)+spark; a*=exp(-pow(.03*vD,2.))*smoothstep(4.6,8.5,vD); gl_FragColor=vec4(vec3(.996,.957,.686)*a,1.);}`,
+      fragmentShader: `varying vec2 vUv; varying float vD; uniform float uLit; uniform float uTime; void main(){ if(uLit<0.001){ discard; } float lit=smoothstep(uLit+0.004,uLit-0.004,vUv.x); float spark=smoothstep(0.012,0.,abs(vUv.x-uLit))*1.4; float a=mix(.10,.55,lit)+spark; a*=exp(-pow(.03*vD,2.))*smoothstep(4.6,8.5,vD); gl_FragColor=vec4(vec3(.996,.957,.686)*a,1.);}`,
     })
     this.group.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 800, 0.0055, 6, false), this.threadMat))
     this.threadU = this.photos.map((_, i) => {
@@ -958,7 +958,7 @@ export class GalleryWorld {
     })
   }
 
-  /** Morph ribbon prints toward letter disc targets after pull-out */
+  /** Morph ribbon prints toward letter disc targets after pull-out, then clear the stage */
   morphIntoLetter(
     discWorldTargets: Array<{ x: number; y: number; z: number }>,
   ): gsap.core.Timeline {
@@ -977,7 +977,28 @@ export class GalleryWorld {
         0.9 + i * 0.03,
       )
     })
+    // Kill the cream thread streak so it cannot cross letter text
+    if (this.threadMat) {
+      tl.to(this.threadMat.uniforms.uLit, { value: 0, duration: 0.6, ease: 'power2.in' }, 0.4)
+    }
+    tl.add(() => {
+      this.photos.forEach((p) => {
+        p.group.visible = false
+      })
+      if (this.threadMat) this.threadMat.uniforms.uLit.value = 0
+    }, 1.85)
     return tl
+  }
+
+  /** Hard-hide gallery decorations (thread + prints + dust) while letter is read */
+  hideForLetter(): void {
+    this.photos.forEach((p) => {
+      p.group.visible = false
+      p.material.uniforms.uReveal.value = 0
+    })
+    if (this.threadMat) this.threadMat.uniforms.uLit.value = 0
+    // Entire gallery group off — no thread streak, haze plane, or dust over letter copy
+    this.group.visible = false
   }
 
   shakeHint(root: THREE.Object3D): void {
