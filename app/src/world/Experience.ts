@@ -389,11 +389,12 @@ export class Experience {
      * content feels glued to the finger — finger left → world/content left →
      * camera travels right along the Bezier toward the next print.
      */
-    const COMMIT_DIST = 0.38 // full commit ≈ 38% of viewport axis
-    const COMMIT_PROGRESS = 0.3
-    const FLICK_VX = 780
+    const COMMIT_DIST = 0.34 // full commit ≈ 34% of viewport axis (snappier short flicks)
+    const COMMIT_PROGRESS = 0.22
+    const FLICK_VX = 520
     let scrubExpected: GestureDirection | 'scroll-up' | null = null
     let rubber = 0
+    let lastFingerProgress = 0
 
     const directionFromDelta = (dx: number, dy: number, axis: 'x' | 'y' | null): GestureDirection => {
       if (axis === 'x') return dx < 0 ? 'left' : 'right'
@@ -446,6 +447,7 @@ export class Experience {
         if (this.unlocked || this.chapter !== 'gallery') return
         if (this.awaitingPullOut) return
         rubber = 0
+        lastFingerProgress = 0
         const started = this.gallery.beginScrub()
         scrubExpected = started?.expected ?? null
         if (!started) scrubExpected = null
@@ -454,6 +456,7 @@ export class Experience {
         if (!scrubExpected || scrubExpected === 'scroll-up') return
         const { progress, wrong } = progressForDrag(scrubExpected, dx, dy, axis)
         rubber = wrong ? progress : 0
+        lastFingerProgress = progress
         this.gallery.scrubTo(progress)
       },
       onDragEnd: ({ dx, dy, axis, vx, vy }) => {
@@ -468,14 +471,19 @@ export class Experience {
           return
         }
         const { progress, wrong } = progressForDrag(scrubExpected, dx, dy, axis)
+        const finger = Math.max(progress, lastFingerProgress)
+        const live = this.gallery.getDragState().progress
         const flick =
           scrubExpected === 'left' || scrubExpected === 'right'
             ? (scrubExpected === 'left' ? -vx : vx)
             : scrubExpected === 'up'
               ? -vy
               : vy
-        const commit = !wrong && (progress >= COMMIT_PROGRESS || flick > FLICK_VX)
-        this.gallery.endScrub({ commit, velocity: flick })
+        // Commit from finger path, smoothed display, or flick momentum
+        const commit =
+          !wrong &&
+          (finger >= COMMIT_PROGRESS || live >= COMMIT_PROGRESS || flick > FLICK_VX)
+        this.gallery.endScrub({ commit, velocity: Math.max(flick, 0) })
         if (!commit && wrong) this.gallery.shakeHint(this.gallery.group)
         scrubExpected = null
         void rubber

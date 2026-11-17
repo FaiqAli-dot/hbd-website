@@ -138,8 +138,8 @@ export class GalleryWorld {
   private scrubDisplay = 0
   private scrubVel = 0
   private scrubLastT = 0
-  /** Critically-damped omega — responsive, low lag, no jitter */
-  private readonly scrubOmega = 28
+  /** Critically-damped omega — responsive (low lag) without jitter */
+  private readonly scrubOmega = 38
 
   constructor() {
     const BG = new THREE.Color('#0b080c')
