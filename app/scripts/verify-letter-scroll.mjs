@@ -30,7 +30,7 @@ async function swipePointer(page, direction) {
   await page.mouse.down()
   await page.mouse.move(x2, y2, { steps: 16 })
   await page.mouse.up()
-  await page.waitForTimeout(2800)
+  await page.waitForTimeout(3000)
 }
 
 async function unlockToLetter(page, preferKeyboard = false) {
@@ -44,7 +44,7 @@ async function unlockToLetter(page, preferKeyboard = false) {
   for (let i = 0; i < gestures.length; i++) {
     if (preferKeyboard) {
       await page.keyboard.press(keys[i])
-      await page.waitForTimeout(2600)
+      await page.waitForTimeout(3000)
     } else {
       await swipePointer(page, gestures[i])
     }

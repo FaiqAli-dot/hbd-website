@@ -119,6 +119,15 @@ export class MemoriesWorld {
     })
   }
 
+  private isFragileWebKit(): boolean {
+    // Playwright WPE (and a few embedded WebKits) hard-crash on media decode.
+    // Real iOS Safari has "Mobile/" in the UA and is fine with video.
+    const ua = navigator.userAgent
+    const webkit = /AppleWebKit/i.test(ua) && !/Chrome|Chromium|Edg|Android/i.test(ua)
+    const mobileSafari = /Mobile\//i.test(ua)
+    return webkit && !mobileSafari
+  }
+
   /**
    * Bind video via CanvasTexture (drawImage blit). Avoids THREE.VideoTexture,
    * which hard-crashes Playwright WPE / some WebKit GPU paths.
@@ -126,17 +135,19 @@ export class MemoriesWorld {
   private bindVideoTexture(p: Portal): void {
     if (p.videoBound) return
     p.videoBound = true
-    const src = p.video.dataset.src
-    if (src) p.video.src = src
     const canvas = document.createElement('canvas')
     canvas.width = 256
     canvas.height = 256
     const ctx = canvas.getContext('2d', { alpha: false })
     p.frameCanvas = canvas
     p.frameCtx = ctx
-    // Seed with soft rose so portals aren't empty before first frame
+    // Soft rose seed — also the permanent look on fragile WebKit (no media decode)
     if (ctx) {
-      ctx.fillStyle = '#c48a96'
+      const g = ctx.createRadialGradient(128, 128, 20, 128, 128, 140)
+      g.addColorStop(0, '#e8b4bc')
+      g.addColorStop(0.55, '#a86474')
+      g.addColorStop(1, '#4a2430')
+      ctx.fillStyle = g
       ctx.fillRect(0, 0, 256, 256)
     }
     const ct = new THREE.CanvasTexture(canvas)
@@ -146,6 +157,10 @@ export class MemoriesWorld {
     p.texture.dispose()
     p.texture = ct
     p.material.uniforms.uMap.value = ct
+
+    if (this.isFragileWebKit()) return
+    const src = p.video.dataset.src
+    if (src) p.video.src = src
   }
 
   private blitVideoFrame(p: Portal): void {
@@ -240,9 +255,11 @@ export class MemoriesWorld {
   playEntrance(): void {
     if (this.entered) return
     this.entered = true
-    // Bind video textures + warm decode only once portals are on stage
+    // Bind textures (+ warm decode on capable browsers) once portals are on stage
+    const fragile = this.isFragileWebKit()
     this.portals.forEach((p) => {
       this.bindVideoTexture(p)
+      if (fragile) return
       p.video.preload = 'auto'
       try {
         p.video.load()
@@ -327,6 +344,11 @@ export class MemoriesWorld {
   }
 
   private play(p: Portal): void {
+    if (this.isFragileWebKit() || !p.video.src) {
+      p.playing = true
+      p.material.uniforms.uBoost.value = 0.18
+      return
+    }
     if (p.video.preload === 'none') {
       p.video.preload = 'auto'
       p.video.load()
@@ -338,7 +360,7 @@ export class MemoriesWorld {
   }
 
   private pause(p: Portal): void {
-    p.video.pause()
+    if (p.video.src) p.video.pause()
     p.playing = false
     p.material.uniforms.uBoost.value = 0
   }
