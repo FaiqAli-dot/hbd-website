@@ -70,13 +70,17 @@ export class Experience {
     this.canvas.setAttribute('aria-hidden', 'true')
     app.appendChild(this.canvas)
 
+    const isWebKit =
+      /AppleWebKit/i.test(navigator.userAgent) &&
+      !/Chrome|Chromium|Edg|Android/i.test(navigator.userAgent)
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
-      antialias: this.tier === 'high',
+      antialias: this.tier === 'high' && !isWebKit,
       alpha: false,
-      powerPreference: 'high-performance',
+      // 'default' is more stable on Safari/WebKit than high-performance
+      powerPreference: isWebKit ? 'default' : 'high-performance',
     })
-    this.renderer.setClearColor('#0b080c')
+    this.renderer.setClearColor('#000f28')
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
@@ -90,11 +94,11 @@ export class Experience {
     this.scene.add(this.atmosphere.background)
     this.scene.add(this.atmosphere.group)
 
-    const key = new THREE.DirectionalLight('#ffd7b0', 0.55)
+    const key = new THREE.DirectionalLight('#fef4af', 0.55)
     key.position.set(3, 5, 4)
-    const rim = new THREE.DirectionalLight('#8aa0c8', 0.18)
+    const rim = new THREE.DirectionalLight('#6a9ad4', 0.22)
     rim.position.set(-4, 1, -2)
-    const amb = new THREE.AmbientLight('#1c1820', 0.35)
+    const amb = new THREE.AmbientLight('#001a40', 0.4)
     this.scene.add(key, rim, amb)
 
     this.gallery = new GalleryWorld()
@@ -357,6 +361,15 @@ export class Experience {
     return { ...this.gallery.getDragState(), convention: 'drag-world' }
   }
 
+  /** Test/capture helper — scrub letter stage clean of discs/thread */
+  forceCleanLetterStage(): void {
+    this.letter.retireForReading()
+    this.letter.group.visible = false
+    this.gallery.hideForLetter()
+    this.atmosphere.dust.visible = false
+    this.memories.group.visible = this.chapter === 'memories' || this.chapter === 'finale'
+  }
+
   private bindGyro(): void {
     const onOrient = (e: DeviceOrientationEvent) => {
       if (e.beta == null || e.gamma == null) return
@@ -385,11 +398,12 @@ export class Experience {
      * content feels glued to the finger — finger left → world/content left →
      * camera travels right along the Bezier toward the next print.
      */
-    const COMMIT_DIST = 0.38 // full commit ≈ 38% of viewport axis
-    const COMMIT_PROGRESS = 0.3
-    const FLICK_VX = 780
+    const COMMIT_DIST = 0.36 // full commit ≈ 36% of viewport axis
+    const COMMIT_PROGRESS = 0.26
+    const FLICK_VX = 560
     let scrubExpected: GestureDirection | 'scroll-up' | null = null
     let rubber = 0
+    let lastFingerProgress = 0
 
     const directionFromDelta = (dx: number, dy: number, axis: 'x' | 'y' | null): GestureDirection => {
       if (axis === 'x') return dx < 0 ? 'left' : 'right'
@@ -442,6 +456,7 @@ export class Experience {
         if (this.unlocked || this.chapter !== 'gallery') return
         if (this.awaitingPullOut) return
         rubber = 0
+        lastFingerProgress = 0
         const started = this.gallery.beginScrub()
         scrubExpected = started?.expected ?? null
         if (!started) scrubExpected = null
@@ -450,6 +465,7 @@ export class Experience {
         if (!scrubExpected || scrubExpected === 'scroll-up') return
         const { progress, wrong } = progressForDrag(scrubExpected, dx, dy, axis)
         rubber = wrong ? progress : 0
+        lastFingerProgress = progress
         this.gallery.scrubTo(progress)
       },
       onDragEnd: ({ dx, dy, axis, vx, vy }) => {
@@ -464,14 +480,16 @@ export class Experience {
           return
         }
         const { progress, wrong } = progressForDrag(scrubExpected, dx, dy, axis)
+        // Latest finger sample (not lagged display — display lag must not force commits)
+        const finger = Math.max(progress, lastFingerProgress)
         const flick =
           scrubExpected === 'left' || scrubExpected === 'right'
             ? (scrubExpected === 'left' ? -vx : vx)
             : scrubExpected === 'up'
               ? -vy
               : vy
-        const commit = !wrong && (progress >= COMMIT_PROGRESS || flick > FLICK_VX)
-        this.gallery.endScrub({ commit, velocity: flick })
+        const commit = !wrong && (finger >= COMMIT_PROGRESS || flick > FLICK_VX)
+        this.gallery.endScrub({ commit, velocity: Math.max(flick, 0) })
         if (!commit && wrong) this.gallery.shakeHint(this.gallery.group)
         scrubExpected = null
         void rubber
@@ -683,6 +701,7 @@ export class Experience {
 
   private setChapter(chapter: typeof this.chapter): void {
     if (this.chapter === chapter) return
+    const prev = this.chapter
     this.chapter = chapter
     this.atmosphere.setPalette(chapter)
     this.ui.setChapter(chapter)
@@ -694,30 +713,71 @@ export class Experience {
       this.hand3d.setVisible(true)
     }
 
-    // Clamp bloom hard on the handwritten finale — no blown-out white disc
-    this.post.setBloomMul(chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : 0.9)
-    this.renderer.toneMappingExposure = chapter === 'finale' ? 0.88 : 1.0
+    // Soft bloom/exposure crossfade — no hard pop between chapters
+    // Keep letter bloom low so soft edges don't read as grey portal rings
+    const bloomTarget =
+      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.45 : 0.7
+    // Letter exposure slightly lifted so navy reads blue, not near-black
+    const exposureTarget = chapter === 'finale' ? 0.88 : chapter === 'letter' ? 1.08 : 1.0
+    if (prefersReducedMotion()) {
+      this.post.setBloomMul(bloomTarget)
+      this.renderer.toneMappingExposure = exposureTarget
+    } else {
+      const bloomProxy = { v: chapter === 'gallery' ? 0.75 : prev === 'finale' ? 0 : 0.9 }
+      // Read current via stepped lerp from last target approximation
+      gsap.to(bloomProxy, {
+        v: bloomTarget,
+        duration: 1.35,
+        ease: 'power2.inOut',
+        onUpdate: () => this.post.setBloomMul(bloomProxy.v),
+      })
+      gsap.to(this.renderer, {
+        toneMappingExposure: exposureTarget,
+        duration: 1.35,
+        ease: 'power2.inOut',
+      })
+    }
 
     if (chapter === 'letter' && !this.transitionFlags.toLetter) {
       this.transitionFlags.toLetter = true
-      this.letter.group.visible = true
+      // Memories stay fully off until Ch3 — never peek through the letter
+      this.memories.group.visible = false
+      this.atmosphere.dust.visible = false
       const targets = this.letter.getDiscWorldTargets()
-      const handoff = this.gallery.getSettledHandoff()
-      // Square → disc morph happens together AFTER the pull-out collage has settled
-      this.letter.playContinuousFromPhotos(handoff)
+      // Ch1→Ch2: gallery planes morph away; letter discs stay off-camera for reading
+      // (faces only return as Ch3 portals after the letter has left)
+      this.letter.retireForReading()
+      this.letter.group.visible = false
       if (!prefersReducedMotion()) {
         this.gallery.morphIntoLetter(targets)
+        window.setTimeout(() => this.gallery.hideForLetter(), 1100)
+      } else {
+        this.gallery.hideForLetter()
       }
-      this.revealLetterText()
+      window.setTimeout(
+        () => this.revealLetterText(),
+        prefersReducedMotion() ? 0 : 420,
+      )
+      // Hard guarantee: no discs / thread / dust over readable letter copy
+      window.setTimeout(() => {
+        this.letter.retireForReading()
+        this.letter.group.visible = false
+        this.gallery.hideForLetter()
+        this.atmosphere.dust.visible = false
+      }, prefersReducedMotion() ? 0 : 900)
     }
 
     if (chapter === 'memories' && !this.transitionFlags.toMemories) {
       this.transitionFlags.toMemories = true
+      this.letter.retireForReading()
+      this.letter.group.visible = false
+      this.gallery.hideForLetter()
       this.memories.group.visible = true
-      if (!prefersReducedMotion()) {
-        this.letter.expandTowardPortals(this.memories.layoutTargets())
-      }
-      this.memories.playEntrance()
+      // Ch2→Ch3: portals alone emerge into separated layout (no giant letter rims)
+      window.setTimeout(
+        () => this.memories.playEntrance(),
+        prefersReducedMotion() ? 0 : 80,
+      )
     }
 
     if (chapter === 'finale' && !this.transitionFlags.toFinale) {
@@ -725,16 +785,16 @@ export class Experience {
       this.finale.group.visible = true
       const worldPos = this.memories.getWorldPositions()
       const colors = this.memories.samplePortalColors(128)
-      // Portal particles gather into the nib, then dissolve completely before writing
+      // Ch3→Ch4: portals draw inward as rose particles gather — overlap, no blank navy
       this.finale.playFromPortals(worldPos, colors)
       this.memories.dissolve()
       this.letter.dissolveForFinale()
-      // Hard-hide leftovers so no gold rings / portal discs remain behind the ink
+      // Keep portals/particles on stage through the gather so mid-frames aren't empty
       window.setTimeout(() => {
         this.letter.group.visible = false
         this.memories.group.visible = false
         this.gallery.group.visible = false
-      }, 1400)
+      }, 3200)
     }
   }
 
@@ -761,6 +821,7 @@ export class Experience {
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     this.gallery.setAspect(w / h)
+    this.memories.setAspect(w / h)
     this.gallery.setPixelHeight(h * this.adaptiveDpr.value)
     this.applyPixelRatio(this.adaptiveDpr.value)
     this.renderer.setSize(w, h, false)

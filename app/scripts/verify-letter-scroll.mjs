@@ -30,20 +30,21 @@ async function swipePointer(page, direction) {
   await page.mouse.down()
   await page.mouse.move(x2, y2, { steps: 16 })
   await page.mouse.up()
-  await page.waitForTimeout(2800)
+  await page.waitForTimeout(3000)
 }
 
 async function unlockToLetter(page, preferKeyboard = false) {
-  await page.goto(BASE + '?v=' + Date.now(), { waitUntil: 'networkidle', timeout: 60000 })
+  await page.goto(BASE + '?v=' + Date.now(), { waitUntil: 'domcontentloaded', timeout: 60000 })
   await page.waitForSelector('.webgl-canvas', { timeout: 30000 })
-  await page.waitForTimeout(700)
+  await page.waitForSelector('[data-gallery-hud]', { timeout: 30000 })
+  await page.waitForTimeout(900)
   await page.locator('.webgl-canvas').click({ position: { x: 160, y: 220 } }).catch(() => {})
 
   const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']
   for (let i = 0; i < gestures.length; i++) {
     if (preferKeyboard) {
       await page.keyboard.press(keys[i])
-      await page.waitForTimeout(2600)
+      await page.waitForTimeout(3000)
     } else {
       await swipePointer(page, gestures[i])
     }

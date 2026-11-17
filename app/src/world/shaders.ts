@@ -68,11 +68,15 @@ varying vec2 vUv;
 void main() {
   vec2 uv = vUv;
   float t = uTime * 0.035;
-  float wash = smoothstep(0.0, 1.0, uv.y + sin(uv.x * 2.5 + t) * 0.1);
-  vec3 col = mix(uColorA, uColorB, wash);
-  col = mix(col, uColorC, 0.2 + 0.2 * sin(t + uv.x * 1.8 + uScroll));
-  float vignette = smoothstep(1.15, 0.3, length(uv - 0.5));
-  col *= vignette;
+  // Center #001A40-ish → edge #000F28 — readable navy, never pure black
+  float radial = 1.0 - smoothstep(0.05, 0.92, length(uv - 0.5));
+  vec3 col = mix(uColorA, uColorB, radial);
+  // Soft cobalt bloom in the mid field
+  float cobalt = 0.18 + 0.1 * sin(t * 0.55 + uv.y * 1.1 + uScroll * 0.3);
+  col = mix(col, uColorC, cobalt * radial);
+  float vig = smoothstep(1.18, 0.34, length(uv - 0.5));
+  // Vignette toward deep navy (uColorA), never multiply toward absolute black
+  col = mix(uColorA, col, vig);
   gl_FragColor = vec4(col, 1.0);
 }
 `
@@ -124,7 +128,9 @@ void main() {
   float dist = distance(vUv, vec2(0.5));
   float vig = smoothstep(0.95, 0.32, dist);
   float grain = fract(sin(dot(vUv * (uTime + 20.0), vec2(12.9898, 78.233))) * 43758.5453);
-  color.rgb *= mix(1.0 - uIntensity, 1.0, vig);
+  // Soften toward navy (#000f28), never multiply into plum/black
+  vec3 navy = vec3(0.0, 0.059, 0.157);
+  color.rgb = mix(mix(color.rgb, navy, uIntensity * 0.85), color.rgb, vig);
   color.rgb += (grain - 0.5) * uGrain;
   gl_FragColor = color;
 }
@@ -156,14 +162,24 @@ uniform sampler2D uMap;
 uniform float uSoft;
 uniform float uBoost;
 uniform float uOpacity;
+uniform float uRim;
 varying vec2 vUv;
 void main() {
   vec2 uv = vUv * 2.0 - 1.0;
   float r = length(uv);
-  float mask = 1.0 - smoothstep(1.0 - uSoft, 1.0, r);
+  // Soft AA disc edge via smoothstep (supersample-like falloff)
+  float edge0 = 1.0 - max(uSoft, 0.035);
+  float mask = 1.0 - smoothstep(edge0, 1.0, r);
   if (mask < 0.01) discard;
   vec4 tex = texture2D(uMap, vUv);
-  gl_FragColor = vec4(tex.rgb * (1.0 + uBoost), mask * uOpacity);
+  vec3 col = tex.rgb * (1.0 + uBoost);
+  // Hairline cream SDF rim + whisper glow — thin, AA'd, never a chunky band
+  float rimBand = smoothstep(0.94, 0.962, r) * (1.0 - smoothstep(0.978, 0.995, r));
+  float rimGlow = smoothstep(0.91, 0.95, r) * (1.0 - smoothstep(0.98, 1.02, r));
+  vec3 cream = vec3(0.996, 0.957, 0.686);
+  col = mix(col, cream, rimBand * uRim * 0.7);
+  col = mix(col, cream, rimGlow * uRim * 0.18);
+  gl_FragColor = vec4(col, mask * uOpacity);
 }
 `
 

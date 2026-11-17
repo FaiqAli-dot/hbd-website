@@ -11,10 +11,10 @@ export class Hand3D {
 
   constructor() {
     this.mat = new THREE.MeshStandardMaterial({
-      color: '#e2c7a4',
+      color: '#fef4af',
       roughness: 0.55,
       metalness: 0.08,
-      emissive: '#3a2818',
+      emissive: '#001a40',
       emissiveIntensity: 0.15,
     })
 

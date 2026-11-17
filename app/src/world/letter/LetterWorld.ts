@@ -35,6 +35,7 @@ export class LetterWorld {
           uSoft: { value: 0.08 },
           uBoost: { value: 0.05 },
           uOpacity: { value: 0 },
+          uRim: { value: 0 },
         },
         vertexShader: photoRevealVertex,
         fragmentShader: circleMaskFragment,
@@ -50,7 +51,7 @@ export class LetterWorld {
       const rim = new THREE.Mesh(
         new THREE.RingGeometry(place.s * 0.98, place.s * 1.06, 64),
         new THREE.MeshBasicMaterial({
-          color: '#e8c9a0',
+          color: '#fef4af',
           transparent: true,
           opacity: 0,
           side: THREE.DoubleSide,
@@ -158,23 +159,55 @@ export class LetterWorld {
         ease: 'power3.inOut',
       })
 
-      // Crossfade texture to dedicated circle photo after the spatial morph
-      const circleTex = this.circleTextures[i]
-      if (circleTex && src) {
-        gsap.delayedCall(1.15 + i * 0.05, () => {
-          // Soft swap: briefly dip opacity, swap map, restore
-          gsap.to(this.mats[i].uniforms.uOpacity, {
-            value: 0.55,
-            duration: 0.25,
-            onComplete: () => {
-              this.mats[i].uniforms.uMap.value = circleTex
-              gsap.to(this.mats[i].uniforms.uOpacity, { value: 1, duration: 0.4 })
-            },
-          })
-        })
-      } else {
-        gsap.to(this.mats[i].uniforms.uOpacity, { value: 1, duration: 0.4, delay: 0.3 + i * 0.05 })
-      }
+      // Peak briefly mid-morph, then fully clear before letter reading
+      gsap.to(this.mats[i].uniforms.uOpacity, {
+        value: 0.9,
+        duration: 0.3,
+        delay: 0.15 + i * 0.03,
+      })
+      gsap.to(this.mats[i].uniforms.uOpacity, {
+        value: 0,
+        duration: 0.55,
+        delay: 0.95 + i * 0.03,
+        ease: 'power2.in',
+        onComplete: () => {
+          mesh.visible = false
+        },
+      })
+      gsap.to(this.rims[i].material as THREE.MeshBasicMaterial, {
+        opacity: 0.25,
+        duration: 0.3,
+        delay: 0.2 + i * 0.03,
+      })
+      gsap.to(this.rims[i].material as THREE.MeshBasicMaterial, {
+        opacity: 0,
+        duration: 0.45,
+        delay: 0.85 + i * 0.03,
+        onComplete: () => {
+          this.rims[i].visible = false
+        },
+      })
+    })
+  }
+
+  /** Ensure every disc/rim is gone while the letter is being read */
+  retireForReading(): void {
+    this.discs.forEach((mesh, i) => {
+      gsap.killTweensOf(mesh)
+      gsap.killTweensOf(mesh.position)
+      gsap.killTweensOf(mesh.scale)
+      gsap.killTweensOf(mesh.rotation)
+      gsap.killTweensOf(this.mats[i].uniforms.uOpacity)
+      gsap.killTweensOf(this.rims[i])
+      gsap.killTweensOf(this.rims[i].position)
+      gsap.killTweensOf(this.rims[i].material)
+      this.mats[i].uniforms.uOpacity.value = 0
+      ;(this.rims[i].material as THREE.MeshBasicMaterial).opacity = 0
+      mesh.visible = false
+      this.rims[i].visible = false
+      // Park far off-camera so nothing can accidentally reappear in frustum
+      mesh.position.set(0, -40, -80)
+      this.rims[i].position.set(0, -40, -80)
     })
   }
 
@@ -218,22 +251,14 @@ export class LetterWorld {
   }
 
   expandTowardPortals(targets: Array<{ x: number; y: number; z: number; s: number }>): gsap.core.Timeline {
+    // Discs already retired during reading — keep this a no-op fade so giant rims never appear
     const tl = gsap.timeline()
     this.discs.forEach((mesh, i) => {
-      const t = targets[i % targets.length]
-      tl.to(
-        mesh.position,
-        {
-          x: t.x,
-          y: t.y,
-          z: t.z - 20,
-          duration: 1.35,
-          ease: 'power3.inOut',
-        },
-        0,
-      )
-      tl.to(mesh.scale, { x: t.s * 1.1, y: t.s * 1.1, z: 1, duration: 1.2, ease: 'power2.inOut' }, 0)
-      tl.to(this.mats[i].uniforms.uOpacity, { value: 0.2, duration: 1.0 }, 0.3)
+      mesh.visible = false
+      this.rims[i].visible = false
+      this.mats[i].uniforms.uOpacity.value = 0
+      ;(this.rims[i].material as THREE.MeshBasicMaterial).opacity = 0
+      void targets
     })
     return tl
   }
@@ -241,6 +266,7 @@ export class LetterWorld {
   update(time: number, pointer: { x: number; y: number }): void {
     if (!this.revealed) return
     this.discs.forEach((mesh, i) => {
+      if (!mesh.visible) return
       const seed = i * 1.7
       mesh.position.y += Math.sin(time * 0.55 + seed) * 0.00085
       mesh.rotation.z = Math.sin(time * 0.35 + seed) * 0.05

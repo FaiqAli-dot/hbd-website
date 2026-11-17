@@ -24,6 +24,11 @@ import video02 from '../assets/videos/memories/02.mp4'
 import video03 from '../assets/videos/memories/03.mp4'
 import video04 from '../assets/videos/memories/04.mp4'
 
+import poster01 from '../assets/images/memories/poster-01.jpg'
+import poster02 from '../assets/images/memories/poster-02.jpg'
+import poster03 from '../assets/images/memories/poster-03.jpg'
+import poster04 from '../assets/images/memories/poster-04.jpg'
+
 import ambient from '../assets/audio/ambient.mp3'
 import reveal from '../assets/audio/reveal.mp3'
 import transition from '../assets/audio/transition.mp3'
@@ -127,14 +132,20 @@ export const galleryPhotos: GalleryPhoto[] = [
 ]
 
 export const letterCopy = {
-  eyebrow: 'A letter, written slowly',
+  /** Greeting line shown above the body */
+  eyebrow: 'My Babygirl,',
   paragraphs: [
-    `My love — another year of you, and somehow the world feels newly lit. I keep thinking about the ordinary minutes: the way you laugh into your shoulder, the way you notice rain before it arrives, the way a room softens whenever you walk in.`,
-    `Today is not just a date on a calendar. It is a celebration of the person who makes every season feel intentional. Thank you for trusting me with your quiet days and your wild ones. Thank you for choosing us, again and again.`,
-    `May this birthday feel like a deep breath — soft, golden, and entirely yours. I am so proud of who you are becoming, and endlessly grateful that I get to witness it up close.`,
+    `Happy Birthday to my person.`,
+    `Sometimes I think about how many little moments we've managed to turn into memories. The dates, the outings, the random conversations, the laughs, the pictures, and all those times we've simply enjoyed each other's company. Some were planned, some happened spontaneously, but somehow they've all become little pieces of a story that I'm really happy we're writing together.`,
+    `One of my favorite things about us is that there's always something to look forward to. Another place to discover, another experience to share, another memory to add to the collection. And even when there's no plan, no special occasion, or nothing particularly exciting happening, having you around makes it worth it.`,
+    `I hope you never stop being curious, dreaming big, trying new things, and becoming everything you want to be. I hope life surprises you in the most beautiful ways, opens doors you never imagined, and gives you countless reasons to smile. You deserve to experience so many wonderful things, and I hope this next year brings plenty of them.`,
+    `And selfishly, I hope I get to be part of many more of those moments. More adventures, more silly pictures, more spontaneous plans, more dinners, more celebrations, and more stories that we'll look back on and laugh about.`,
+    `I'm grateful for you, for us, and for everything we've shared so far. There's still so much left to experience, and I can't wait to see what we make of it.`,
+    `Happy Birthday, beautiful. Here's to another year of you, and hopefully a thousand more memories together. ❤️`,
   ],
-  signoff: 'Always yours,',
-  signature: '— with all my love',
+  /** Empty — closing lives in the final paragraph */
+  signoff: '',
+  signature: '',
 }
 
 export const circlePhotos: CirclePhoto[] = [
@@ -180,33 +191,45 @@ export const memoryVideos: MemoryVideo[] = [
   {
     id: 'm1',
     src: video01,
-    caption: 'Golden hour, slow bloom',
-    label: 'Spring',
+    poster: poster01,
+    caption: 'That winter smile',
+    label: 'Smile',
   },
   {
     id: 'm2',
     src: video02,
-    caption: 'Mountains holding the sky',
-    label: 'Wander',
+    poster: poster02,
+    caption: 'Soft afternoon light',
+    label: 'Light',
   },
   {
     id: 'm3',
     src: video03,
-    caption: 'Light across open land',
-    label: 'Horizon',
+    poster: poster03,
+    caption: 'A quiet glance',
+    label: 'Glance',
   },
   {
     id: 'm4',
     src: video04,
-    caption: 'Dusk settling soft',
-    label: 'Dusk',
+    poster: poster04,
+    caption: 'Warm evening glow',
+    label: 'Glow',
   },
 ]
 
 export const finaleCopy = {
   headline: 'HAPPY BIRTHDAY',
-  subline: 'To the love that rewrites every ordinary day.',
-  closing: 'May this year be gentle, bright, and wildly yours.',
+  /** Stanza lines (lowercase, revealed under the handwritten Happy Birthday) */
+  stanza1: [
+    'to the girl whom my smile belongs to,',
+    'my love regenerates for,',
+    'my happiness resides within.',
+  ],
+  stanza2: ['to the first birthday celebration,', 'of many more to come.'],
+  /** @deprecated kept empty so nothing stale can surface */
+  subline: '',
+  closing: '',
 }
 
 export const galleryCopy = {

@@ -40,7 +40,7 @@ export function mountFallback(app: HTMLElement): void {
           ${memoryVideos.map((m) => `<figure><video src="${m.src}" muted playsinline controls loop></video><figcaption>${m.label} — ${m.caption}</figcaption></figure>`).join('')}
         </div>
       </section>
-      <p>${finaleCopy.subline}<br/>${finaleCopy.closing}</p>
+      <p>${finaleCopy.stanza1.join('<br/>')}<br/><br/>${finaleCopy.stanza2.join('<br/>')}</p>
     </div>
   `
 
