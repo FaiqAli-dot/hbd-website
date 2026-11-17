@@ -163,6 +163,7 @@ uniform float uSoft;
 uniform float uBoost;
 uniform float uOpacity;
 uniform float uRim;
+uniform float uGlow;
 varying vec2 vUv;
 void main() {
   vec2 uv = vUv * 2.0 - 1.0;
@@ -176,10 +177,14 @@ void main() {
   // Hairline cream SDF rim + whisper glow — thin, AA'd, never a chunky band
   float rimBand = smoothstep(0.94, 0.962, r) * (1.0 - smoothstep(0.978, 0.995, r));
   float rimGlow = smoothstep(0.91, 0.95, r) * (1.0 - smoothstep(0.98, 1.02, r));
-  vec3 cream = vec3(0.996, 0.957, 0.686);
+  vec3 cream = vec3(0.996, 0.957, 0.686); // #FEF4AF
   col = mix(col, cream, rimBand * uRim * 0.7);
   col = mix(col, cream, rimGlow * uRim * 0.18);
-  gl_FragColor = vec4(col, mask * uOpacity);
+  // Soft pulsing invitation glow (active portal)
+  float outerGlow = smoothstep(1.15, 0.82, r) * (1.0 - smoothstep(0.55, 0.92, r));
+  col = mix(col, cream, outerGlow * uGlow * 0.45);
+  float alpha = mask * uOpacity + outerGlow * uGlow * 0.22;
+  gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
 }
 `
 

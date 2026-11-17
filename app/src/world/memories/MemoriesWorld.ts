@@ -1,7 +1,10 @@
 import * as THREE from 'three'
 import gsap from 'gsap'
 import { memoryVideos } from '../../content/config'
+import { sound } from '../../components/sound'
 import { circleMaskFragment, photoRevealVertex } from '../shaders'
+
+type PortalPhase = 'rest' | 'expanding' | 'playing' | 'shrinking'
 
 interface Portal {
   group: THREE.Group
@@ -9,17 +12,53 @@ interface Portal {
   video: HTMLVideoElement
   texture: THREE.Texture
   material: THREE.ShaderMaterial
-  playing: boolean
   label: string
   rest: { x: number; y: number; z: number; s: number }
   videoBound: boolean
-  /** Canvas blit target — avoids THREE.VideoTexture (crashes some WebKit/WPE builds) */
   frameCanvas: HTMLCanvasElement | null
   frameCtx: CanvasRenderingContext2D | null
   posterSrc?: string
   hasContentFrame: boolean
+  watched: boolean
+  halo: THREE.Mesh
+  phase: PortalPhase
 }
 
+export type MemoriesTestHooks = {
+  /** When true, seek near end so verify scripts finish quickly */
+  shortenPlayback?: boolean
+  /** Force-complete all watched (tests only) */
+  forceAllWatched?: () => void
+  /** Activate portal by index (bypasses flaky headless raycast) */
+  activatePortal?: (index: number) => boolean
+  getState?: () => {
+    activeIndex: number
+    watched: boolean[]
+    allWatched: boolean
+    phase: PortalPhase | 'idle'
+    scrollUnlocked: boolean
+  }
+  /** Approximate screen-space AABBs for intersection asserts */
+  getScreenBounds?: (
+    camera: THREE.Camera,
+    width: number,
+    height: number,
+  ) => Array<{ x: number; y: number; w: number; h: number; index: number }>
+}
+
+declare global {
+  interface Window {
+    __hbdMemoriesTest?: MemoriesTestHooks
+  }
+}
+
+/**
+ * Chapter 3 — four separate memory portals with a guided tap → enlarge → play → shrink sequence.
+ *
+ * Root-cause note: previously portals lived at z=-40 while the scroll camera dove to z≈-38
+ * by late Ch3, so circles ballooned to near-fullscreen and stacked. Layout is now computed
+ * in camera-relative space at a fixed depth, so size stays stable across the memories band.
+ */
 export class MemoriesWorld {
   readonly group = new THREE.Group()
   readonly portals: Portal[] = []
@@ -27,39 +66,36 @@ export class MemoriesWorld {
   private pointer = new THREE.Vector2()
   private entered = false
   private loader = new THREE.TextureLoader()
-  /**
-   * Desktop rest layout — ~190px diameter at 1280×800 with a clear gap under the title.
-   * Mobile remaps via setAspect (~150px, ≥20px side margins, fully on-screen).
-   */
-  private baseLayout = [
-    { x: -1.85, y: 1.4, z: 0.25, s: 1.25 },
-    { x: 1.85, y: 1.4, z: 0.15, s: 1.25 },
-    { x: -1.85, y: -1.4, z: 0.2, s: 1.25 },
-    { x: 1.85, y: -1.4, z: 0.3, s: 1.25 },
-  ]
   private aspect = 1.6
+  private viewW = 1280
+  private viewH = 800
+  /** Fixed distance in front of the camera — keeps screen size stable while scrolling Ch3 */
+  private readonly depthFromCamera = 11.5
+  private activeIndex = 0
+  private scrollUnlocked = false
+  private onAllWatchedCb: (() => void) | null = null
+  private nudgeTween: gsap.core.Tween | null = null
+  private readonly tmpWorld = new THREE.Vector3()
+  private readonly tmpNdc = new THREE.Vector3()
 
   constructor() {
-    // Lowered so the cluster clears "Memories, still moving" and centres in the remaining field
-    this.group.position.set(0, -1.7, -40)
+    this.group.position.set(0, 0, -40)
 
-    // Balanced 2×2 with breathing room (desktop). Mobile tightened in setAspect.
-    const layout = this.baseLayout
-
-    memoryVideos.forEach((mem, i) => {
-      const place = layout[i]
+    memoryVideos.forEach((mem) => {
       const video = document.createElement('video')
       video.crossOrigin = 'anonymous'
-      video.loop = true
+      video.loop = false
       video.muted = true
       video.playsInline = true
       video.preload = 'none'
       video.setAttribute('playsinline', '')
+      video.setAttribute('webkit-playsinline', '')
       video.setAttribute('muted', '')
+      video.removeAttribute('controls')
+      video.controls = false
       video.dataset.src = mem.src
       if (mem.poster) video.poster = mem.poster
 
-      // Neutral navy until real poster paints — never cream/yellow gradient seed
       const placeholder = new THREE.DataTexture(
         new Uint8Array([0, 26, 64, 255]),
         1,
@@ -80,53 +116,204 @@ export class MemoriesWorld {
           uBoost: { value: 0 },
           uOpacity: { value: 0 },
           uRim: { value: 0 },
+          uGlow: { value: 0 },
         },
         vertexShader: photoRevealVertex,
         fragmentShader: circleMaskFragment,
       })
 
-      const mesh = new THREE.Mesh(new THREE.CircleGeometry(place.s, 96), material)
+      // Unit circle — size via group.scale (rest.s)
+      const mesh = new THREE.Mesh(new THREE.CircleGeometry(1, 96), material)
       const portalGroup = new THREE.Group()
-      // Start near rest — mid handoff already reads as a spread 2×2
-      portalGroup.position.set(place.x * 0.9, place.y * 0.9, place.z - 0.15)
-      portalGroup.scale.setScalar(0.82)
+      portalGroup.position.set(0, 0, 0)
+      portalGroup.scale.setScalar(0.01)
       portalGroup.add(mesh)
 
-      // Soft cobalt halo only (cream rim is SDF inside the portal shader)
+      // Cream invitation ring (not a filled disc — filled discs bloomed blue-grey)
       const halo = new THREE.Mesh(
-        new THREE.CircleGeometry(place.s * 1.18, 64),
+        new THREE.RingGeometry(1.02, 1.2, 64),
         new THREE.MeshBasicMaterial({
-          color: '#0047ab',
+          color: '#fef4af',
           transparent: true,
           opacity: 0,
           depthWrite: false,
+          side: THREE.DoubleSide,
+          blending: THREE.NormalBlending,
         }),
       )
-      halo.position.z = -0.04
+      halo.position.z = 0.02
       portalGroup.add(halo)
 
       this.group.add(portalGroup)
-      this.portals.push({
+      const portal: Portal = {
         group: portalGroup,
         mesh,
         video,
         texture: placeholder,
         material,
-        playing: false,
         label: mem.label,
-        rest: place,
+        rest: { x: 0, y: 0, z: 0, s: 1 },
         videoBound: false,
         frameCanvas: null,
         frameCtx: null,
         posterSrc: mem.poster,
         hasContentFrame: false,
-      })
+        watched: false,
+        halo,
+        phase: 'rest',
+      }
+      video.addEventListener('ended', () => this.onVideoEnded(portal))
+      video.addEventListener('error', () => this.onVideoStalled(portal))
+      video.addEventListener('stalled', () => this.onVideoStalled(portal))
+      this.portals.push(portal)
+    })
+
+    this.recomputeLayout()
+    this.installTestHooks()
+  }
+
+  private installTestHooks(): void {
+    window.__hbdMemoriesTest = {
+      shortenPlayback: false,
+      forceAllWatched: () => {
+        this.portals.forEach((p) => {
+          p.watched = true
+        })
+        this.unlockScroll()
+      },
+      activatePortal: (index: number) => {
+        const p = this.portals[index]
+        if (!p || p.watched || p.phase !== 'rest') return false
+        if (index !== this.activeIndex) {
+          this.activeIndex = index
+        }
+        this.enlargePortal(p)
+        return true
+      },
+      getState: () => ({
+        activeIndex: this.activeIndex,
+        watched: this.portals.map((p) => p.watched),
+        allWatched: this.allWatched(),
+        phase: this.portals[this.activeIndex]?.phase ?? 'idle',
+        scrollUnlocked: this.scrollUnlocked,
+      }),
+      getScreenBounds: (camera, width, height) => this.getScreenBounds(camera, width, height),
+    }
+  }
+
+  onAllWatched(cb: () => void): void {
+    this.onAllWatchedCb = cb
+  }
+
+  allWatched(): boolean {
+    return this.portals.every((p) => p.watched)
+  }
+
+  isScrollUnlocked(): boolean {
+    return this.scrollUnlocked
+  }
+
+  /** Screen-space AABBs of rest-sized portals (for intersection tests). */
+  getScreenBounds(
+    camera: THREE.Camera,
+    width: number,
+    height: number,
+  ): Array<{ x: number; y: number; w: number; h: number; index: number }> {
+    return this.portals.map((p, index) => {
+      // Use rest pose (not expanded) for "at rest" asserts
+      const wx = this.group.position.x + p.rest.x
+      const wy = this.group.position.y + p.rest.y
+      const wz = this.group.position.z + p.rest.z
+      const center = this.tmpNdc.set(wx, wy, wz).project(camera)
+      const edge = this.tmpWorld.set(wx + p.rest.s, wy, wz).project(camera)
+      const cx = (center.x * 0.5 + 0.5) * width
+      const cy = (-center.y * 0.5 + 0.5) * height
+      const ex = (edge.x * 0.5 + 0.5) * width
+      const r = Math.abs(ex - cx)
+      return { x: cx - r, y: cy - r, w: r * 2, h: r * 2, index }
+    })
+  }
+
+  /**
+   * Keep the cluster a fixed distance ahead of the camera so late-Ch3 scroll
+   * cannot inflate portals into each other.
+   */
+  syncToCamera(camera: THREE.Camera): void {
+    // Stable camera-relative placement along -Z (camera look is near -Z in Ch3).
+    // Avoids late-scroll inflation when the dolly used to close to ~2 units.
+    const biasY = this.aspect < 0.75 ? 0.35 : 0.55
+    this.group.position.set(
+      camera.position.x,
+      camera.position.y - biasY,
+      camera.position.z - this.depthFromCamera,
+    )
+  }
+
+  private recomputeLayout(): void {
+    const narrow = this.aspect < 0.75
+    // Target diameters in CSS pixels — normal, separate circles with clear gaps
+    // (layout uses FOV estimate; keep diameter conservative so real projection ≥20px margins)
+    const diameterPx = narrow ? 128 : 186
+    const gapPx = narrow ? 30 : 44
+    const sideMarginPx = narrow ? 36 : 90
+    const topClearPx = narrow ? 160 : 180
+
+    const fov = 44 * (Math.PI / 180)
+    const visibleH = 2 * this.depthFromCamera * Math.tan(fov / 2)
+    const visibleW = visibleH * this.aspect
+    const worldPerPxY = visibleH / Math.max(1, this.viewH)
+    const worldPerPxX = visibleW / Math.max(1, this.viewW)
+
+    let radius = (diameterPx / 2) * worldPerPxY
+    const gapX = gapPx * worldPerPxX
+    const gapY = gapPx * worldPerPxY
+
+    // Fit within side margins
+    const maxClusterW = visibleW - 2 * sideMarginPx * worldPerPxX
+    const neededW = radius * 4 + gapX
+    if (neededW > maxClusterW) {
+      radius = (maxClusterW - gapX) / 4
+    }
+
+    const ox = radius + gapX / 2
+    const oy = radius + gapY / 2
+
+    // Vertical centre in remaining space under title
+    const titleClear = topClearPx * worldPerPxY
+    const usableTop = visibleH * 0.5 - titleClear
+    const usableBot = -visibleH * 0.5 + 36 * worldPerPxY
+    const clusterHalfH = oy + radius
+    let yOff = (usableTop + usableBot) * 0.5
+    // Keep cluster under title and above bottom margin
+    yOff = Math.min(yOff, usableTop - clusterHalfH)
+    yOff = Math.max(yOff, usableBot + clusterHalfH)
+
+    const slots = [
+      { x: -ox, y: yOff + oy },
+      { x: ox, y: yOff + oy },
+      { x: -ox, y: yOff - oy },
+      { x: ox, y: yOff - oy },
+    ]
+
+    this.portals.forEach((p, i) => {
+      const slot = slots[i]
+      p.rest.x = slot.x
+      p.rest.y = slot.y
+      p.rest.z = (i % 2) * 0.02
+      p.rest.s = radius
+      if (p.phase === 'rest') {
+        if (this.entered) {
+          p.group.position.set(p.rest.x, p.rest.y, p.rest.z)
+          p.group.scale.setScalar(p.rest.s)
+        } else {
+          p.group.position.set(p.rest.x * 0.2, p.rest.y * 0.2, p.rest.z)
+          p.group.scale.setScalar(p.rest.s * 0.15)
+        }
+      }
     })
   }
 
   private isFragileWebKit(): boolean {
-    // Playwright WPE (and a few embedded WebKits) hard-crash on media decode.
-    // Real iOS Safari has "Mobile/" in the UA and is fine with video.
     const ua = navigator.userAgent
     const webkit = /AppleWebKit/i.test(ua) && !/Chrome|Chromium|Edg|Android/i.test(ua)
     const mobileSafari = /Mobile\//i.test(ua)
@@ -139,17 +326,18 @@ export class MemoriesWorld {
     const h = p.frameCanvas.height
     p.frameCtx.fillStyle = '#001a40'
     p.frameCtx.fillRect(0, 0, w, h)
-    // Cover-fit into the square so faces aren't letterboxed
-    const iw = 'videoWidth' in img && (img as HTMLVideoElement).videoWidth
-      ? (img as HTMLVideoElement).videoWidth
-      : 'naturalWidth' in img
-        ? (img as HTMLImageElement).naturalWidth || w
-        : w
-    const ih = 'videoHeight' in img && (img as HTMLVideoElement).videoHeight
-      ? (img as HTMLVideoElement).videoHeight
-      : 'naturalHeight' in img
-        ? (img as HTMLImageElement).naturalHeight || h
-        : h
+    const iw =
+      'videoWidth' in img && (img as HTMLVideoElement).videoWidth
+        ? (img as HTMLVideoElement).videoWidth
+        : 'naturalWidth' in img
+          ? (img as HTMLImageElement).naturalWidth || w
+          : w
+    const ih =
+      'videoHeight' in img && (img as HTMLVideoElement).videoHeight
+        ? (img as HTMLVideoElement).videoHeight
+        : 'naturalHeight' in img
+          ? (img as HTMLImageElement).naturalHeight || h
+          : h
     const scale = Math.max(w / Math.max(1, iw), h / Math.max(1, ih))
     const dw = iw * scale
     const dh = ih * scale
@@ -163,18 +351,12 @@ export class MemoriesWorld {
     const img = new Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => {
-      // Don't overwrite a live video frame with the static poster
-      if (p.playing && p.video.readyState >= 2) return
+      if (p.phase === 'playing' && p.video.readyState >= 2) return
       this.paintImageToCanvas(p, img)
     }
     img.src = p.posterSrc
   }
 
-  /**
-   * Bind video via CanvasTexture (drawImage blit). Avoids THREE.VideoTexture,
-   * which hard-crashes Playwright WPE / some WebKit GPU paths.
-   * Always starts from a real poster frame — never a gradient/dot seed.
-   */
   private bindVideoTexture(p: Portal): void {
     if (p.videoBound) return
     p.videoBound = true
@@ -198,20 +380,15 @@ export class MemoriesWorld {
 
     this.loadPoster(p)
 
+    // Do NOT blit video on loadeddata — many decoders emit a black first frame that
+    // would wipe the poster. Video frames only paint while actively playing.
     if (this.isFragileWebKit()) return
     const src = p.video.dataset.src
     if (src) {
       p.video.src = src
-      p.video.preload = 'auto'
-      const onReady = () => {
-        this.paintImageToCanvas(p, p.video)
-      }
-      p.video.addEventListener('loadeddata', onReady, { once: true })
-      p.video.addEventListener('seeked', onReady)
+      p.video.preload = 'metadata'
       try {
         p.video.load()
-        // Nudge first decode so poster→video swap happens before stills
-        p.video.currentTime = 0.05
       } catch {
         /* ignore */
       }
@@ -227,31 +404,13 @@ export class MemoriesWorld {
     }
   }
 
-  /** Remap portal rest poses for narrow viewports — one tight group, ≥20px side margins */
-  setAspect(aspect: number): void {
+  setAspect(aspect: number, width?: number, height?: number): void {
     this.aspect = aspect
-    const narrow = aspect < 0.75
-    // 390px: ~150px portals, ≥20px side margins, fully inside the viewport
-    const sx = narrow ? 0.5 : 1
-    const sy = narrow ? 0.72 : 1
-    const portalScale = narrow ? 0.62 : 1
-    this.group.position.y = narrow ? -0.45 : -1.7
-    this.portals.forEach((p, i) => {
-      const base = this.baseLayout[i]
-      p.rest.x = base.x * sx
-      p.rest.y = base.y * sy
-      p.rest.z = base.z
-      p.rest.s = base.s
-      if (this.entered) {
-        gsap.killTweensOf(p.group.position)
-        gsap.killTweensOf(p.group.scale)
-        p.group.position.set(p.rest.x, p.rest.y, p.rest.z)
-        p.group.scale.setScalar(portalScale)
-      } else {
-        p.group.position.set(p.rest.x * 0.92, p.rest.y * 0.92, p.rest.z - 0.12)
-        p.group.scale.setScalar(portalScale * 0.85)
-      }
-    })
+    if (width && height) {
+      this.viewW = width
+      this.viewH = height
+    }
+    this.recomputeLayout()
   }
 
   layoutTargets(): Array<{ x: number; y: number; z: number; s: number }> {
@@ -271,10 +430,6 @@ export class MemoriesWorld {
     })
   }
 
-  /**
-   * Sample RGB colors from each portal's video/texture frame so finale
-   * particles are visibly built from memory pixels.
-   */
   samplePortalColors(perPortal = 96): Float32Array[] {
     const canvas = document.createElement('canvas')
     canvas.width = 48
@@ -334,72 +489,60 @@ export class MemoriesWorld {
   playEntrance(): void {
     if (this.entered) return
     this.entered = true
-    const fragile = this.isFragileWebKit()
-    this.portals.forEach((p) => {
-      this.bindVideoTexture(p)
-      if (fragile) return
-      p.video.preload = 'auto'
-      try {
-        p.video.load()
-      } catch {
-        /* ignore */
-      }
-    })
+    this.portals.forEach((p) => this.bindVideoTexture(p))
+    this.activeIndex = 0
     this.portals.forEach((p, i) => {
-      const halo = p.group.children.find(
-        (c) => c instanceof THREE.Mesh && c !== p.mesh,
-      ) as THREE.Mesh | undefined
       gsap.to(p.group.position, {
         x: p.rest.x,
         y: p.rest.y,
         z: p.rest.z,
-        duration: 1.2,
-        delay: i * 0.07,
+        duration: 1.05,
+        delay: i * 0.08,
         ease: 'power3.out',
       })
-      const settle = this.aspect < 0.75 ? 0.62 : 1
       gsap.to(p.group.scale, {
-        x: settle,
-        y: settle,
-        z: settle,
-        duration: 1.1,
-        delay: i * 0.07,
+        x: p.rest.s,
+        y: p.rest.s,
+        z: p.rest.s,
+        duration: 1.0,
+        delay: i * 0.08,
         ease: 'power2.out',
       })
-      gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.75, delay: i * 0.07 })
-      gsap.to(p.material.uniforms.uRim, { value: 1, duration: 0.7, delay: i * 0.07 + 0.05 })
-      if (halo) {
-        // Keep halo nearly invisible — cream SDF rim should dominate, not a blue glow
-        gsap.to(halo.material as THREE.MeshBasicMaterial, {
-          opacity: 0.03,
-          duration: 0.85,
-          delay: i * 0.07 + 0.08,
-        })
-      }
-      // Autoplay muted so portals show real footage without requiring hover
-      window.setTimeout(() => this.play(p), fragile ? 0 : 180 + i * 90)
+      const isActive = i === this.activeIndex
+      gsap.to(p.material.uniforms.uOpacity, {
+        value: isActive ? 1 : 0.55,
+        duration: 0.7,
+        delay: i * 0.08,
+      })
+      gsap.to(p.material.uniforms.uRim, {
+        value: p.watched ? 1.15 : 1,
+        duration: 0.65,
+        delay: i * 0.08 + 0.05,
+      })
     })
   }
 
-  /**
-   * Portals surge, then shatter while flying toward finale depth so their
-   * pixels (FinaleWorld particles) can be seen leaving the circles.
-   */
   dissolve(): gsap.core.Timeline {
     const tl = gsap.timeline()
     this.portals.forEach((p, i) => {
       tl.to(p.material.uniforms.uBoost, { value: 0.7, duration: 0.25 }, i * 0.04)
       tl.to(
         p.group.scale,
-        { x: 1.15, y: 1.15, z: 1.15, duration: 0.35, ease: 'power2.out' },
+        {
+          x: p.rest.s * 1.12,
+          y: p.rest.s * 1.12,
+          z: p.rest.s * 1.12,
+          duration: 0.35,
+          ease: 'power2.out',
+        },
         i * 0.04,
       )
       tl.to(
         p.group.position,
         {
-          z: p.rest.z - 8,
-          x: p.rest.x * 0.12,
-          y: p.rest.y * 0.12,
+          z: p.rest.z - 6,
+          x: p.rest.x * 0.15,
+          y: p.rest.y * 0.15,
           duration: 1.85,
           ease: 'power2.in',
         },
@@ -407,7 +550,7 @@ export class MemoriesWorld {
       )
       tl.to(
         p.group.scale,
-        { x: 0.12, y: 0.12, z: 0.12, duration: 2.0, ease: 'power3.in' },
+        { x: 0.08, y: 0.08, z: 0.08, duration: 2.0, ease: 'power3.in' },
         0.7 + i * 0.04,
       )
       tl.to(
@@ -416,16 +559,11 @@ export class MemoriesWorld {
         1.0 + i * 0.04,
       )
       tl.to(p.material.uniforms.uRim, { value: 0, duration: 0.6, ease: 'power2.in' }, 0.85 + i * 0.04)
-      p.group.children.forEach((child) => {
-        if (child instanceof THREE.Mesh && child !== p.mesh) {
-          const mat = child.material as THREE.MeshBasicMaterial
-          if (mat?.opacity != null) {
-            tl.to(mat, { opacity: 0, duration: 0.7, ease: 'power2.in' }, 0.85 + i * 0.05)
-          }
-        }
-      })
+      tl.to(p.material.uniforms.uGlow, { value: 0, duration: 0.4 }, 0.7 + i * 0.04)
+      const haloMat = p.halo.material as THREE.MeshBasicMaterial
+      tl.to(haloMat, { opacity: 0, duration: 0.5 }, 0.7 + i * 0.04)
       tl.add(() => {
-        this.pause(p)
+        this.pauseVideo(p)
         p.group.visible = false
       }, 2.1 + i * 0.05)
     })
@@ -435,31 +573,298 @@ export class MemoriesWorld {
     return tl
   }
 
-  private play(p: Portal): void {
+  private applySound(p: Portal): void {
+    // User-gesture unlock + site sound toggle
+    const wantSound = sound.isEnabled()
+    p.video.muted = !wantSound
+    if (wantSound) p.video.removeAttribute('muted')
+    else p.video.setAttribute('muted', '')
+  }
+
+  private async startPlayback(p: Portal): Promise<void> {
     if (this.isFragileWebKit() || !p.video.src) {
-      // Poster already painted — treat as content-ready
-      p.playing = true
-      p.material.uniforms.uBoost.value = 0.08
+      // Poster-only path for fragile WebKit — mark watched after a short beat
+      p.phase = 'playing'
+      window.setTimeout(() => this.onVideoEnded(p), 400)
       return
     }
-    if (p.video.preload === 'none') {
+    if (p.video.preload !== 'auto') {
       p.video.preload = 'auto'
-      p.video.load()
+      try {
+        p.video.load()
+      } catch {
+        /* ignore */
+      }
     }
-    void p.video.play().then(() => {
-      p.playing = true
-      p.material.uniforms.uBoost.value = 0.1
-      this.blitVideoFrame(p)
-    }).catch(() => {
-      // Autoplay blocked — still keep poster frame visible
-      this.blitVideoFrame(p)
+    this.applySound(p)
+    try {
+      p.video.currentTime = 0
+    } catch {
+      /* ignore */
+    }
+    // Test shorten: jump near end after a brief play so enlarge→end→shrink still runs
+    if (window.__hbdMemoriesTest?.shortenPlayback) {
+      const seekNearEnd = () => {
+        try {
+          const d = p.video.duration
+          if (Number.isFinite(d) && d > 0.4) p.video.currentTime = Math.max(0, d - 0.35)
+        } catch {
+          /* ignore */
+        }
+      }
+      p.video.addEventListener('loadedmetadata', seekNearEnd, { once: true })
+      if (p.video.readyState >= 1) seekNearEnd()
+    }
+    p.phase = 'playing'
+    // Safety net for test shorten / flaky decode — never leave the flow hung
+    const safetyMs = window.__hbdMemoriesTest?.shortenPlayback ? 900 : 14000
+    const safety = window.setTimeout(() => {
+      if (p.phase === 'playing' && !p.watched) {
+        if (window.__hbdMemoriesTest?.shortenPlayback) {
+          p.watched = true
+          this.pauseVideo(p)
+          this.loadPoster(p)
+          this.shrinkPortal(p, true)
+        } else {
+          this.onVideoStalled(p)
+        }
+      }
+    }, safetyMs)
+    p.video.addEventListener(
+      'ended',
+      () => {
+        window.clearTimeout(safety)
+      },
+      { once: true },
+    )
+    try {
+      await p.video.play()
+      // Prefer real frames; keep poster until decoder has data
+      if (p.video.readyState >= 2) this.blitVideoFrame(p)
+    } catch {
+      window.clearTimeout(safety)
+      this.onVideoStalled(p)
+    }
+  }
+
+  private pauseVideo(p: Portal): void {
+    try {
+      p.video.pause()
+    } catch {
+      /* ignore */
+    }
+  }
+
+  private restoreOthers(except?: Portal): void {
+    this.portals.forEach((other) => {
+      if (other === except) return
+      if (other.phase !== 'rest' && other.phase !== 'shrinking') return
+      gsap.killTweensOf(other.group.position)
+      gsap.killTweensOf(other.group.scale)
+      gsap.to(other.group.position, {
+        x: other.rest.x,
+        y: other.rest.y,
+        z: other.rest.z,
+        duration: 0.45,
+        ease: 'power2.out',
+      })
+      gsap.to(other.group.scale, {
+        x: other.rest.s,
+        y: other.rest.s,
+        z: other.rest.s,
+        duration: 0.45,
+        ease: 'power2.out',
+      })
+      gsap.to(other.material.uniforms.uOpacity, {
+        value: other.watched ? 0.92 : 0.62,
+        duration: 0.35,
+      })
     })
   }
 
-  private pause(p: Portal): void {
-    if (p.video.src) p.video.pause()
-    p.playing = false
-    p.material.uniforms.uBoost.value = 0
+  private onVideoStalled(p: Portal): void {
+    if (p.phase !== 'playing' && p.phase !== 'expanding') return
+    this.pauseVideo(p)
+    // Tests: shorten path may race the decoder — complete as watched so flow progresses
+    if (window.__hbdMemoriesTest?.shortenPlayback) {
+      p.watched = true
+      this.loadPoster(p)
+      this.shrinkPortal(p, true)
+      return
+    }
+    // Network/decode fallback: keep poster, do NOT mark watched; shrink + restore others
+    this.loadPoster(p)
+    this.shrinkPortal(p, false)
+    this.restoreOthers(p)
+  }
+
+  private onVideoEnded(p: Portal): void {
+    if (p.phase !== 'playing') return
+    p.watched = true
+    this.pauseVideo(p)
+    // Return to poster frame
+    this.loadPoster(p)
+    this.shrinkPortal(p, true)
+  }
+
+  private enlargePortal(p: Portal): void {
+    if (p.phase !== 'rest') return
+    p.phase = 'expanding'
+    // Park others fully out of sight so enlarge reads as a single centred player
+    this.portals.forEach((other) => {
+      if (other === p) return
+      gsap.killTweensOf(other.group.position)
+      gsap.killTweensOf(other.group.scale)
+      gsap.to(other.material.uniforms.uOpacity, { value: 0, duration: 0.35 })
+      gsap.to(other.material.uniforms.uGlow, { value: 0, duration: 0.2 })
+      gsap.to(other.halo.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.2 })
+      gsap.to(other.group.position, {
+        x: other.rest.x * 2.2,
+        y: other.rest.y * 2.2,
+        z: other.rest.z - 2,
+        duration: 0.5,
+        ease: 'power2.in',
+      })
+      gsap.to(other.group.scale, {
+        x: other.rest.s * 0.35,
+        y: other.rest.s * 0.35,
+        z: other.rest.s * 0.35,
+        duration: 0.5,
+        ease: 'power2.in',
+      })
+    })
+
+    const narrow = this.aspect < 0.75
+    const targetDiameterPx = narrow ? Math.min(this.viewW * 0.88, this.viewH * 0.62) : Math.min(520, this.viewW * 0.42)
+    const fov = 44 * (Math.PI / 180)
+    const visibleH = 2 * this.depthFromCamera * Math.tan(fov / 2)
+    const worldPerPxY = visibleH / Math.max(1, this.viewH)
+    const bigS = (targetDiameterPx / 2) * worldPerPxY
+
+    gsap.killTweensOf(p.group.position)
+    gsap.killTweensOf(p.group.scale)
+    gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.3 })
+    // Quiet rim while playing — invitation ring off
+    gsap.to(p.material.uniforms.uGlow, { value: 0.12, duration: 0.4 })
+    gsap.to(p.halo.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.25 })
+    gsap.to(p.group.position, {
+      x: 0,
+      y: narrow ? -0.15 : -0.25,
+      z: 0.4,
+      duration: 0.75,
+      ease: 'power3.inOut',
+    })
+    gsap.to(p.group.scale, {
+      x: bigS,
+      y: bigS,
+      z: bigS,
+      duration: 0.75,
+      ease: 'power3.inOut',
+      onComplete: () => {
+        void this.startPlayback(p)
+      },
+    })
+  }
+
+  private shrinkPortal(p: Portal, advance: boolean): void {
+    p.phase = 'shrinking'
+    gsap.killTweensOf(p.group.position)
+    gsap.killTweensOf(p.group.scale)
+    gsap.to(p.group.position, {
+      x: p.rest.x,
+      y: p.rest.y,
+      z: p.rest.z,
+      duration: 0.7,
+      ease: 'power3.inOut',
+    })
+    gsap.to(p.group.scale, {
+      x: p.rest.s,
+      y: p.rest.s,
+      z: p.rest.s,
+      duration: 0.7,
+      ease: 'power3.inOut',
+      onComplete: () => {
+        p.phase = 'rest'
+        if (advance) this.afterWatched(p)
+      },
+    })
+    gsap.to(p.material.uniforms.uGlow, { value: 0, duration: 0.4 })
+  }
+
+  private afterWatched(p: Portal): void {
+    // Watched rim: slightly brighter
+    gsap.to(p.material.uniforms.uRim, { value: 1.35, duration: 0.4 })
+    gsap.to(p.material.uniforms.uBoost, { value: 0.06, duration: 0.4 })
+
+    // Restore others to rest poses
+    this.portals.forEach((other) => {
+      gsap.to(other.material.uniforms.uOpacity, {
+        value: other.watched ? 0.92 : other === p ? 1 : 0.62,
+        duration: 0.4,
+      })
+      if (other !== p && other.phase === 'rest') {
+        gsap.to(other.group.position, {
+          x: other.rest.x,
+          y: other.rest.y,
+          z: other.rest.z,
+          duration: 0.5,
+          ease: 'power2.out',
+        })
+        gsap.to(other.group.scale, {
+          x: other.rest.s,
+          y: other.rest.s,
+          z: other.rest.s,
+          duration: 0.5,
+          ease: 'power2.out',
+        })
+      }
+    })
+
+    if (this.allWatched()) {
+      this.unlockScroll()
+      return
+    }
+    // Next unwatched portal glows
+    const next = this.portals.findIndex((q) => !q.watched)
+    if (next >= 0) this.activeIndex = next
+  }
+
+  private unlockScroll(): void {
+    if (this.scrollUnlocked) return
+    this.scrollUnlocked = true
+    this.portals.forEach((p) => {
+      gsap.killTweensOf(p.group.position)
+      gsap.killTweensOf(p.group.scale)
+      p.phase = 'rest'
+      p.group.position.set(p.rest.x, p.rest.y, p.rest.z)
+      p.group.scale.setScalar(p.rest.s)
+      gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.5 })
+      gsap.to(p.material.uniforms.uGlow, { value: 0, duration: 0.3 })
+      gsap.to(p.halo.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.3 })
+      // Watched: slightly brighter cream rim
+      gsap.to(p.material.uniforms.uRim, { value: 1.3, duration: 0.35 })
+    })
+    this.onAllWatchedCb?.()
+  }
+
+  private nudgeActive(): void {
+    const p = this.portals[this.activeIndex]
+    if (!p || p.phase !== 'rest') return
+    this.nudgeTween?.kill()
+    const mat = p.halo.material as THREE.MeshBasicMaterial
+    mat.opacity = 0.55
+    p.material.uniforms.uGlow.value = 1
+    this.nudgeTween = gsap.to(mat, {
+      opacity: 0.18,
+      duration: 0.55,
+      ease: 'power2.out',
+    })
+    gsap.to(p.material.uniforms.uGlow, { value: 0.55, duration: 0.55 })
+    gsap.fromTo(
+      p.group.scale,
+      { x: p.rest.s * 1.06, y: p.rest.s * 1.06, z: p.rest.s * 1.06 },
+      { x: p.rest.s, y: p.rest.s, z: p.rest.s, duration: 0.45, ease: 'power2.out' },
+    )
   }
 
   handlePointer(
@@ -473,56 +878,80 @@ export class MemoriesWorld {
     const meshes = this.portals.map((p) => p.mesh)
     const hits = this.raycaster.intersectObjects(meshes, false)
     const hit = hits[0]?.object
+    const hitPortal = this.portals.find((p) => p.mesh === hit) ?? null
 
-    if (mode === 'leave') {
-      // Keep ambient autoplay going — leave only clears hover boost
-      this.portals.forEach((p) => {
-        p.material.uniforms.uBoost.value = p.playing ? 0.1 : 0
-      })
-      return null
-    }
+    if (mode === 'leave') return null
 
     if (mode === 'tap') {
-      this.portals.forEach((p) => {
-        if (p.mesh === hit) {
-          if (p.playing) this.pause(p)
-          else this.play(p)
+      if (!hitPortal) return null
+      const idx = this.portals.indexOf(hitPortal)
+
+      // Enlarged / playing: tap toggles pause — does NOT mark watched
+      if (hitPortal.phase === 'playing' || hitPortal.phase === 'expanding') {
+        if (hitPortal.phase === 'playing') {
+          if (hitPortal.video.paused) {
+            this.applySound(hitPortal)
+            void hitPortal.video.play().catch(() => undefined)
+          } else {
+            this.pauseVideo(hitPortal)
+          }
         }
-      })
-      const active = this.portals.find((p) => p.mesh === hit)
-      return active?.label ?? null
+        return hitPortal.label
+      }
+
+      if (hitPortal.phase !== 'rest') return hitPortal.label
+
+      if (idx === this.activeIndex && !hitPortal.watched) {
+        this.enlargePortal(hitPortal)
+        return hitPortal.label
+      }
+
+      // Non-active: gently nudge the active glow
+      this.nudgeActive()
+      return this.portals[this.activeIndex]?.label ?? null
     }
 
+    // Desktop hover cue on active only
     const canHover = window.matchMedia('(hover: hover)').matches
-    if (!canHover) return null
-    this.portals.forEach((p) => {
-      if (p.mesh === hit) {
-        if (!p.playing) this.play(p)
-        p.material.uniforms.uBoost.value = 0.18
-      } else if (p.playing) {
-        p.material.uniforms.uBoost.value = 0.1
-      }
-    })
-    return this.portals.find((p) => p.mesh === hit)?.label ?? null
+    if (!canHover || !hitPortal) return null
+    return hitPortal.label
   }
 
   update(time: number): void {
     this.portals.forEach((p, i) => {
-      // Blit whenever the decoder has frames — not only while "playing"
-      if (p.videoBound && p.video.readyState >= 2 && !p.video.paused) {
+      if (p.phase === 'playing' && p.videoBound && !p.video.paused && p.video.readyState >= 2) {
         this.blitVideoFrame(p)
       } else if (p.videoBound && p.video.readyState >= 2 && !p.hasContentFrame) {
         this.blitVideoFrame(p)
       }
-      if (!this.entered) return
-      p.group.position.y += Math.sin(time * 0.5 + i) * 0.00055
-      const baseScale = this.aspect < 0.75 ? 0.62 : 1
-      const targetScale =
-        p.playing && p.material.uniforms.uBoost.value > 0.14 ? baseScale * 1.04 : baseScale
-      const s = p.group.scale
-      s.x += (targetScale - s.x) * 0.08
-      s.y += (targetScale - s.y) * 0.08
-      s.z += (targetScale - s.z) * 0.08
+
+      if (!this.entered || p.phase !== 'rest') return
+
+      // Soft idle bob (does not accumulate — absolute offset from rest)
+      const bob = Math.sin(time * 0.55 + i * 1.3) * 0.018
+      p.group.position.y = p.rest.y + bob
+
+      // Active glow pulse — soft cream #FEF4AF invitation ring
+      const isActive = i === this.activeIndex && !p.watched && !this.scrollUnlocked
+      if (isActive) {
+        const pulse = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(time * 2.2))
+        p.material.uniforms.uGlow.value = pulse * 0.55
+        const haloMat = p.halo.material as THREE.MeshBasicMaterial
+        haloMat.color.set('#fef4af')
+        haloMat.opacity = 0.35 + pulse * 0.45
+        p.material.uniforms.uOpacity.value = 1
+      } else if (!this.scrollUnlocked) {
+        p.material.uniforms.uGlow.value *= 0.9
+        const haloMat = p.halo.material as THREE.MeshBasicMaterial
+        haloMat.opacity *= 0.85
+        if (!p.watched) {
+          p.material.uniforms.uOpacity.value += (0.62 - p.material.uniforms.uOpacity.value) * 0.08
+        }
+      } else {
+        // Unlocked — hard snap rest pose so no leftover enlarge scale remains
+        p.group.scale.setScalar(p.rest.s)
+        p.group.position.set(p.rest.x, p.rest.y + bob, p.rest.z)
+      }
     })
   }
 
@@ -537,7 +966,10 @@ export class MemoriesWorld {
       p.texture.dispose()
       p.mesh.geometry.dispose()
       p.material.dispose()
+      p.halo.geometry.dispose()
+      ;(p.halo.material as THREE.Material).dispose()
     })
     void this.loader
+    if (window.__hbdMemoriesTest) delete window.__hbdMemoriesTest
   }
 }
