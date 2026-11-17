@@ -668,7 +668,8 @@ export class Experience {
           const holdZ = -26
           this.cameraBase.z = THREE.MathUtils.lerp(-18, holdZ, Math.min(1, t / 0.35))
           this.cameraBase.y = THREE.MathUtils.lerp(0.2, 0.08, t)
-          this.cameraBase.x = Math.cos(t * Math.PI) * 0.2
+          // Keep x near 0 so the 2×2 stays horizontally centred on mobile
+          this.cameraBase.x = Math.cos(t * Math.PI) * 0.04
           this.cameraBase.lookY = 0.02
           this.setChapter('memories')
         } else {
@@ -833,11 +834,14 @@ export class Experience {
 
     // Soft bloom/exposure crossfade — no hard pop between chapters
     // Keep letter bloom low so soft edges don't read as grey portal rings
-    // Memories bloom near-off so cream #FEF4AF invitation rings stay cream
+    // Memories bloom off — bloom was washing cream halos to grey/blue
     const bloomTarget =
-      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.45 : 0.12
+      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.45 : 0
     // Letter exposure slightly lifted so navy reads blue, not near-black
     const exposureTarget = chapter === 'finale' ? 0.88 : chapter === 'letter' ? 1.08 : 1.0
+    // Keep cream #FEF4AF readable — ACES was greying the invitation glow
+    this.renderer.toneMapping =
+      chapter === 'memories' ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping
     if (prefersReducedMotion()) {
       this.post.setBloomMul(bloomTarget)
       this.renderer.toneMappingExposure = exposureTarget
@@ -976,16 +980,19 @@ export class Experience {
     this.finale.update(t, dtMs / 1000)
 
     const reduced = prefersReducedMotion()
-    const parallaxX = reduced ? 0 : this.pointer.x * 0.18 + this.gyro.x * 0.22
-    const parallaxY = reduced ? 0 : this.pointer.y * 0.12 + this.gyro.y * 0.16
+    // Mute parallax in memories so the 2×2 stays optically centred
+    const paraMul = this.chapter === 'memories' ? 0.15 : 1
+    const parallaxX = reduced ? 0 : (this.pointer.x * 0.18 + this.gyro.x * 0.22) * paraMul
+    const parallaxY = reduced ? 0 : (this.pointer.y * 0.12 + this.gyro.y * 0.16) * paraMul
 
     if (!this.unlocked) {
       // Camera-led ribbon: GalleryWorld owns position/quaternion/FOV
       this.gallery.applyCamera(this.camera, t, { x: parallaxX, y: parallaxY })
     } else {
-      const breathX = reduced ? 0 : Math.sin(t * 0.45) * 0.08
-      const breathY = reduced ? 0 : Math.cos(t * 0.32) * 0.05
-      const breathZ = reduced ? 0 : Math.sin(t * 0.28) * 0.12
+      const breathAmp = this.chapter === 'memories' ? 0.2 : 1
+      const breathX = reduced ? 0 : Math.sin(t * 0.45) * 0.08 * breathAmp
+      const breathY = reduced ? 0 : Math.cos(t * 0.32) * 0.05 * breathAmp
+      const breathZ = reduced ? 0 : Math.sin(t * 0.28) * 0.12 * breathAmp
       const tx = this.cameraBase.x + parallaxX * 0.35 + breathX
       const ty = this.cameraBase.y + parallaxY * 0.25 + breathY
       const tz = this.cameraBase.z + breathZ
@@ -996,17 +1003,31 @@ export class Experience {
       const collageFov = this.gallery.getCollageCamera().fov
       const targetFov =
         this.chapter === 'finale' ? 42 : this.chapter === 'gallery' ? collageFov : 44
+      // Snap FOV in memories so portal screen size matches layout math
+      const fovLerp = this.chapter === 'memories' ? 0.2 : 0.06
       if (Math.abs(this.camera.fov - targetFov) > 0.05) {
-        this.camera.fov += (targetFov - this.camera.fov) * 0.06
+        this.camera.fov += (targetFov - this.camera.fov) * fovLerp
+        this.camera.updateProjectionMatrix()
+      } else if (this.chapter === 'memories' && Math.abs(this.camera.fov - 44) > 0.01) {
+        this.camera.fov = 44
         this.camera.updateProjectionMatrix()
       }
       const lookZ =
         this.chapter === 'gallery' ? this.camera.position.z - 6.7 : this.camera.position.z - 8
-      this.camera.lookAt(
-        parallaxX * 0.4,
-        this.cameraBase.lookY + parallaxY * 0.15,
-        lookZ,
-      )
+      // Memories: look straight ahead on the optical axis so the 2×2 stays centred
+      if (this.chapter === 'memories') {
+        this.camera.lookAt(
+          this.camera.position.x + parallaxX * 0.05,
+          this.camera.position.y + this.cameraBase.lookY * 0.25,
+          lookZ,
+        )
+      } else {
+        this.camera.lookAt(
+          parallaxX * 0.4,
+          this.cameraBase.lookY + parallaxY * 0.15,
+          lookZ,
+        )
+      }
     }
 
     const scrollDelta = Math.abs(this.scrollProgress - this.lastScrollProgress)

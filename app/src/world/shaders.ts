@@ -168,23 +168,21 @@ varying vec2 vUv;
 void main() {
   vec2 uv = vUv * 2.0 - 1.0;
   float r = length(uv);
-  // Soft AA disc edge via smoothstep (supersample-like falloff)
-  float edge0 = 1.0 - max(uSoft, 0.035);
+  // Tight AA disc — keep edge crisp so no navy gap between photo and cream halo
+  float soft = max(uSoft * 0.55, 0.02);
+  float edge0 = 1.0 - soft;
   float mask = 1.0 - smoothstep(edge0, 1.0, r);
   if (mask < 0.01) discard;
   vec4 tex = texture2D(uMap, vUv);
   vec3 col = tex.rgb * (1.0 + uBoost);
-  // Hairline cream SDF rim + whisper glow — thin, AA'd, never a chunky band
-  float rimBand = smoothstep(0.94, 0.962, r) * (1.0 - smoothstep(0.978, 0.995, r));
-  float rimGlow = smoothstep(0.91, 0.95, r) * (1.0 - smoothstep(0.98, 1.02, r));
+  // Thin crisp cream SDF rim — bridges into the outer halo (no dark gap ring)
   vec3 cream = vec3(0.996, 0.957, 0.686); // #FEF4AF
-  col = mix(col, cream, rimBand * uRim * 0.7);
-  col = mix(col, cream, rimGlow * uRim * 0.18);
-  // Soft pulsing invitation glow (active portal)
-  float outerGlow = smoothstep(1.15, 0.82, r) * (1.0 - smoothstep(0.55, 0.92, r));
-  col = mix(col, cream, outerGlow * uGlow * 0.45);
-  float alpha = mask * uOpacity + outerGlow * uGlow * 0.22;
-  gl_FragColor = vec4(col, clamp(alpha, 0.0, 1.0));
+  float rimBand = smoothstep(0.93, 0.96, r) * (1.0 - smoothstep(0.975, 0.995, r));
+  float rimStr = uRim * (0.85 + uGlow * 0.55);
+  col = mix(col, cream, rimBand * rimStr);
+  // When inviting, seal the seam with a touch more cream at the edge
+  col = mix(col, cream, smoothstep(0.9, 0.99, r) * uGlow * 0.35);
+  gl_FragColor = vec4(col, mask * uOpacity);
 }
 `
 

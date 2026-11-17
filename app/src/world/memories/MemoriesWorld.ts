@@ -77,6 +77,10 @@ export class MemoriesWorld {
   private nudgeTween: gsap.core.Tween | null = null
   private readonly tmpWorld = new THREE.Vector3()
   private readonly tmpNdc = new THREE.Vector3()
+  private readonly lookDir = new THREE.Vector3()
+  private readonly camUp = new THREE.Vector3()
+  /** Ease-in-out pulse period for active cream glow (seconds) */
+  private readonly glowPeriod = 2.4
 
   constructor() {
     this.group.position.set(0, 0, -40)
@@ -129,19 +133,20 @@ export class MemoriesWorld {
       portalGroup.scale.setScalar(0.01)
       portalGroup.add(mesh)
 
-      // Cream invitation ring (not a filled disc — filled discs bloomed blue-grey)
+      // Soft feathered cream #FEF4AF halo (additive + NoToneMapping in memories)
       const halo = new THREE.Mesh(
-        new THREE.RingGeometry(1.02, 1.2, 64),
+        new THREE.CircleGeometry(1.28, 128),
         new THREE.MeshBasicMaterial({
-          color: '#fef4af',
+          map: MemoriesWorld.sharedGlowTexture(),
+          color: '#ffffff',
           transparent: true,
           opacity: 0,
           depthWrite: false,
-          side: THREE.DoubleSide,
-          blending: THREE.NormalBlending,
+          blending: THREE.AdditiveBlending,
+          toneMapped: false,
         }),
       )
-      halo.position.z = 0.02
+      halo.position.z = -0.02
       portalGroup.add(halo)
 
       this.group.add(portalGroup)
@@ -170,6 +175,38 @@ export class MemoriesWorld {
 
     this.recomputeLayout()
     this.installTestHooks()
+  }
+
+  private static glowTex: THREE.CanvasTexture | null = null
+
+  /** Soft #FEF4AF radial — thin peak at photo rim, long feathered falloff (no hard band) */
+  private static sharedGlowTexture(): THREE.CanvasTexture {
+    if (MemoriesWorld.glowTex) return MemoriesWorld.glowTex
+    const size = 512
+    const canvas = document.createElement('canvas')
+    canvas.width = size
+    canvas.height = size
+    const ctx = canvas.getContext('2d')!
+    const c = size / 2
+    // Halo mesh radius 1.28 → photo rim at c/1.28
+    const photoR = c / 1.28
+    const g = ctx.createRadialGradient(c, c, photoR * 0.78, c, c, c * 0.995)
+    // #FEF4AF — soft ring: rise under the rim, peak, then long feather (not a flat band)
+    g.addColorStop(0.0, 'rgba(254,244,175,0)')
+    g.addColorStop(0.1, 'rgba(254,244,175,0.15)')
+    g.addColorStop(0.18, 'rgba(254,244,175,0.7)')
+    g.addColorStop(0.3, 'rgba(254,244,175,0.4)')
+    g.addColorStop(0.5, 'rgba(254,244,175,0.16)')
+    g.addColorStop(0.75, 'rgba(254,244,175,0.04)')
+    g.addColorStop(1.0, 'rgba(254,244,175,0)')
+    ctx.clearRect(0, 0, size, size)
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, size, size)
+    const tex = new THREE.CanvasTexture(canvas)
+    tex.colorSpace = THREE.SRGBColorSpace
+    tex.needsUpdate = true
+    MemoriesWorld.glowTex = tex
+    return tex
   }
 
   private installTestHooks(): void {
@@ -219,13 +256,15 @@ export class MemoriesWorld {
     width: number,
     height: number,
   ): Array<{ x: number; y: number; w: number; h: number; index: number }> {
+    this.group.updateMatrixWorld(true)
     return this.portals.map((p, index) => {
-      // Use rest pose (not expanded) for "at rest" asserts
-      const wx = this.group.position.x + p.rest.x
-      const wy = this.group.position.y + p.rest.y
-      const wz = this.group.position.z + p.rest.z
-      const center = this.tmpNdc.set(wx, wy, wz).project(camera)
-      const edge = this.tmpWorld.set(wx + p.rest.s, wy, wz).project(camera)
+      // Rest pose in local space → world (respects group transform)
+      const center = this.tmpNdc.set(p.rest.x, p.rest.y, p.rest.z)
+      this.group.localToWorld(center)
+      const edge = this.tmpWorld.set(p.rest.x + p.rest.s, p.rest.y, p.rest.z)
+      this.group.localToWorld(edge)
+      center.project(camera)
+      edge.project(camera)
       const cx = (center.x * 0.5 + 0.5) * width
       const cy = (-center.y * 0.5 + 0.5) * height
       const ex = (edge.x * 0.5 + 0.5) * width
@@ -239,23 +278,27 @@ export class MemoriesWorld {
    * cannot inflate portals into each other.
    */
   syncToCamera(camera: THREE.Camera): void {
-    // Stable camera-relative placement along -Z (camera look is near -Z in Ch3).
-    // Avoids late-scroll inflation when the dolly used to close to ~2 units.
-    const biasY = this.aspect < 0.75 ? 0.35 : 0.55
-    this.group.position.set(
-      camera.position.x,
-      camera.position.y - biasY,
-      camera.position.z - this.depthFromCamera,
-    )
+    // Centre of the view frustum at fixed depth — equal L/R margins.
+    // Bias title clearance along camera-up (NOT world Y), or the cluster drifts sideways.
+    this.tmpNdc.set(0, 0, 0.5).unproject(camera)
+    this.lookDir.copy(this.tmpNdc).sub(camera.position).normalize()
+    this.camUp.set(0, 1, 0).applyQuaternion(camera.quaternion).normalize()
+    const biasY = this.aspect < 0.75 ? 0.32 : 0.5
+    this.group.position
+      .copy(camera.position)
+      .addScaledVector(this.lookDir, this.depthFromCamera)
+      .addScaledVector(this.camUp, -biasY)
+    this.group.rotation.set(0, 0, 0)
   }
 
   private recomputeLayout(): void {
     const narrow = this.aspect < 0.75
     // Target diameters in CSS pixels — normal, separate circles with clear gaps
     // (layout uses FOV estimate; keep diameter conservative so real projection ≥20px margins)
-    const diameterPx = narrow ? 128 : 186
-    const gapPx = narrow ? 30 : 44
-    const sideMarginPx = narrow ? 36 : 90
+    const diameterPx = narrow ? 124 : 186
+    const gapPx = narrow ? 28 : 44
+    // Extra mobile margin so active halo pulse (×1.04) still reads centred
+    const sideMarginPx = narrow ? 44 : 90
     const topClearPx = narrow ? 160 : 180
 
     const fov = 44 * (Math.PI / 180)
@@ -731,9 +774,10 @@ export class MemoriesWorld {
     gsap.killTweensOf(p.group.position)
     gsap.killTweensOf(p.group.scale)
     gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.3 })
-    // Quiet rim while playing — invitation ring off
+    // Quiet rim while playing — invitation glow off
     gsap.to(p.material.uniforms.uGlow, { value: 0.12, duration: 0.4 })
     gsap.to(p.halo.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.25 })
+    p.halo.scale.setScalar(1)
     gsap.to(p.group.position, {
       x: 0,
       y: narrow ? -0.15 : -0.25,
@@ -815,6 +859,7 @@ export class MemoriesWorld {
       gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.5 })
       gsap.to(p.material.uniforms.uGlow, { value: 0, duration: 0.3 })
       gsap.to(p.halo.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.3 })
+      p.halo.scale.setScalar(1)
       // Watched: slightly brighter cream rim
       gsap.to(p.material.uniforms.uRim, { value: 1.3, duration: 0.35 })
     })
@@ -826,18 +871,18 @@ export class MemoriesWorld {
     if (!p || p.phase !== 'rest') return
     this.nudgeTween?.kill()
     const mat = p.halo.material as THREE.MeshBasicMaterial
-    mat.opacity = 0.55
+    mat.opacity = 0.9
     p.material.uniforms.uGlow.value = 1
     this.nudgeTween = gsap.to(mat, {
-      opacity: 0.18,
+      opacity: 0.45,
       duration: 0.55,
       ease: 'power2.out',
     })
     gsap.to(p.material.uniforms.uGlow, { value: 0.55, duration: 0.55 })
     gsap.fromTo(
-      p.group.scale,
-      { x: p.rest.s * 1.06, y: p.rest.s * 1.06, z: p.rest.s * 1.06 },
-      { x: p.rest.s, y: p.rest.s, z: p.rest.s, duration: 0.45, ease: 'power2.out' },
+      p.halo.scale,
+      { x: 1.06, y: 1.06, z: 1.06 },
+      { x: 1, y: 1, z: 1, duration: 0.45, ease: 'power2.out' },
     )
   }
 
@@ -905,26 +950,35 @@ export class MemoriesWorld {
       const bob = Math.sin(time * 0.55 + i * 1.3) * 0.018
       p.group.position.y = p.rest.y + bob
 
-      // Active glow pulse — soft cream #FEF4AF invitation ring
+      const haloMat = p.halo.material as THREE.MeshBasicMaterial
+      // Active glow pulse — soft cream #FEF4AF, ~2.4s ease-in-out
       const isActive = i === this.activeIndex && !p.watched && !this.scrollUnlocked
       if (isActive) {
-        const pulse = 0.45 + 0.55 * (0.5 + 0.5 * Math.sin(time * 2.2))
-        p.material.uniforms.uGlow.value = pulse * 0.55
-        const haloMat = p.halo.material as THREE.MeshBasicMaterial
-        haloMat.color.set('#fef4af')
-        haloMat.opacity = 0.35 + pulse * 0.45
+        const cycle = (time % this.glowPeriod) / this.glowPeriod
+        // ease-in-out (smoothstep-like)
+        const e = cycle < 0.5 ? 2 * cycle * cycle : 1 - Math.pow(-2 * cycle + 2, 2) / 2
+        const opacity = 0.45 + 0.45 * e // 0.45 → 0.9
+        const haloScale = 1.0 + 0.04 * e // 1.0 → 1.04 (halo only — keeps grid centred)
+        p.material.uniforms.uGlow.value = 0.35 + 0.4 * e
+        haloMat.opacity = opacity
+        p.halo.scale.setScalar(haloScale)
         p.material.uniforms.uOpacity.value = 1
+        // Keep portal body at rest scale so L/R margins stay equal while glowing
+        p.group.scale.setScalar(p.rest.s)
       } else if (!this.scrollUnlocked) {
-        p.material.uniforms.uGlow.value *= 0.9
-        const haloMat = p.halo.material as THREE.MeshBasicMaterial
-        haloMat.opacity *= 0.85
+        p.material.uniforms.uGlow.value *= 0.88
+        haloMat.opacity *= 0.82
+        p.halo.scale.setScalar(1)
         if (!p.watched) {
           p.material.uniforms.uOpacity.value += (0.62 - p.material.uniforms.uOpacity.value) * 0.08
         }
+        p.group.scale.setScalar(p.rest.s)
       } else {
         // Unlocked — hard snap rest pose so no leftover enlarge scale remains
         p.group.scale.setScalar(p.rest.s)
         p.group.position.set(p.rest.x, p.rest.y + bob, p.rest.z)
+        haloMat.opacity = 0
+        p.halo.scale.setScalar(1)
       }
     })
   }
