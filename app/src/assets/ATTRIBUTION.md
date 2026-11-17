@@ -10,7 +10,7 @@ Files under `images/gallery/` and `images/circles/` were sourced from Unsplash p
 
 ## Videos
 
-Ken Burns-style loops under `videos/memories/` were generated locally with ffmpeg from Unsplash stills (same license). Keep files small for GitHub Pages.
+Ken Burns-style loops under `videos/memories/` are generated locally with ffmpeg from the portrait stills in `images/circles/01–04.jpg` (same Unsplash license), so Chapter 3 portals show faces rather than landscape stock. Keep files small for GitHub Pages. Replace with your own clips via `src/content/config.ts` before sharing privately.
 
 ## Audio
 

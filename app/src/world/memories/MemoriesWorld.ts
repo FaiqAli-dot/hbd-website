@@ -27,17 +27,21 @@ export class MemoriesWorld {
   private pointer = new THREE.Vector2()
   private entered = false
   private loader = new THREE.TextureLoader()
-  /** Desktop rest layout — mobile remaps via setAspect */
+  /**
+   * Desktop rest layout — ~200–240px at 1280×800 under the title.
+   * Mobile remaps via setAspect (pull inward, slight scale down).
+   */
   private baseLayout = [
-    { x: -2.2, y: 1.25, z: 0.35, s: 1.0 },
-    { x: 2.2, y: 1.25, z: 0.2, s: 1.0 },
-    { x: -2.2, y: -1.25, z: 0.25, s: 1.0 },
-    { x: 2.2, y: -1.25, z: 0.4, s: 1.0 },
+    { x: -2.4, y: 2.05, z: 0.25, s: 1.7 },
+    { x: 2.4, y: 2.05, z: 0.15, s: 1.7 },
+    { x: -2.4, y: -2.05, z: 0.2, s: 1.7 },
+    { x: 2.4, y: -2.05, z: 0.3, s: 1.7 },
   ]
   private aspect = 1.6
 
   constructor() {
-    this.group.position.set(0, 0, -42)
+    // Slightly closer + lowered so the 2×2 sits centered under the title
+    this.group.position.set(0, -0.55, -40)
 
     // Balanced 2×2 with breathing room (desktop). Mobile tightened in setAspect.
     const layout = this.baseLayout
@@ -223,14 +227,16 @@ export class MemoriesWorld {
     }
   }
 
-  /** Remap portal rest poses for narrow viewports so nothing clips and the center isn't empty */
+  /** Remap portal rest poses for narrow viewports — one tight group, not edge-pinned columns */
   setAspect(aspect: number): void {
     this.aspect = aspect
     const narrow = aspect < 0.75
-    // Pull inward on 390px so all four sit fully on-screen in a tight balanced 2×2
-    const sx = narrow ? 0.68 : 1
-    const sy = narrow ? 0.78 : 1
-    const portalScale = narrow ? 0.82 : 1
+    // 390px: pull columns inward, keep enough vertical gap so circles don't overlap
+    // (~140–150px), one centered cluster under the title
+    const sx = narrow ? 0.7 : 1
+    const sy = narrow ? 0.96 : 1
+    const portalScale = narrow ? 0.68 : 1
+    this.group.position.y = narrow ? -0.15 : -0.55
     this.portals.forEach((p, i) => {
       const base = this.baseLayout[i]
       p.rest.x = base.x * sx
@@ -243,14 +249,19 @@ export class MemoriesWorld {
         p.group.position.set(p.rest.x, p.rest.y, p.rest.z)
         p.group.scale.setScalar(portalScale)
       } else {
-        p.group.position.set(p.rest.x * 0.9, p.rest.y * 0.9, p.rest.z - 0.15)
-        p.group.scale.setScalar(portalScale * 0.82)
+        p.group.position.set(p.rest.x * 0.92, p.rest.y * 0.92, p.rest.z - 0.12)
+        p.group.scale.setScalar(portalScale * 0.85)
       }
     })
   }
 
   layoutTargets(): Array<{ x: number; y: number; z: number; s: number }> {
-    return this.portals.map((p) => ({ ...p.rest, z: p.rest.z - 42 }))
+    return this.portals.map((p) => ({
+      ...p.rest,
+      x: p.rest.x + this.group.position.x,
+      y: p.rest.y + this.group.position.y,
+      z: p.rest.z + this.group.position.z,
+    }))
   }
 
   getWorldPositions(): THREE.Vector3[] {
@@ -347,7 +358,7 @@ export class MemoriesWorld {
         delay: i * 0.07,
         ease: 'power3.out',
       })
-      const settle = this.aspect < 0.75 ? 0.82 : 1
+      const settle = this.aspect < 0.75 ? 0.68 : 1
       gsap.to(p.group.scale, {
         x: settle,
         y: settle,
@@ -506,9 +517,9 @@ export class MemoriesWorld {
       }
       if (!this.entered) return
       p.group.position.y += Math.sin(time * 0.5 + i) * 0.00055
-      const baseScale = this.aspect < 0.75 ? 0.82 : 1
+      const baseScale = this.aspect < 0.75 ? 0.68 : 1
       const targetScale =
-        p.playing && p.material.uniforms.uBoost.value > 0.14 ? baseScale * 1.05 : baseScale
+        p.playing && p.material.uniforms.uBoost.value > 0.14 ? baseScale * 1.04 : baseScale
       const s = p.group.scale
       s.x += (targetScale - s.x) * 0.08
       s.y += (targetScale - s.y) * 0.08
