@@ -1,17 +1,26 @@
 :root {
-  --bg: #0b080c;
-  --plum-0: #0e080d;
-  --plum-1: #1a0e17;
-  --plum-2: #2a1522;
+  /* Cobalt + butter cream (sampled); deep navies for cinematic grounds */
+  --bg: #000f28;
+  --navy-0: #001a40;
+  --navy-1: #002a66;
+  --navy-2: #0047ab;
+  --plum-0: #001a40;
+  --plum-1: #002a66;
+  --plum-2: #0047ab;
+  /* Ch4 handwriting stays rose; keep tokens for ink/particles */
   --rose-ink: #f4c9d1;
   --rose-mid: #e8a0ae;
   --rose-deep: #e4a3b1;
   --blush-hi: #fbe0e5;
-  --ink: #efe4e7;
-  --ink-muted: rgba(239, 228, 231, 0.72);
-  --champagne: #d4b483;
-  --blush: #c4a494;
-  --line: rgba(243, 238, 230, 0.16);
+  /* Butter cream family — primary accent + readable body ink on navy */
+  --cream: #fef4af;
+  --cream-deep: #e8d98a;
+  --cream-mute: #c9bc6e;
+  --ink: #fef8d4;
+  --ink-muted: rgba(254, 244, 175, 0.72);
+  --champagne: #fef4af;
+  --blush: #c9bc6e;
+  --line: rgba(254, 244, 175, 0.18);
   --font-display: 'Syne', 'Avenir Next', sans-serif;
   --font-body: 'Cormorant Garamond', 'Newsreader', Georgia, serif;
   --font-ui: 'Outfit', 'Avenir Next', sans-serif;
@@ -87,8 +96,8 @@ html.gallery-complete .webgl-canvas {
   top: 0;
   z-index: 100;
   padding: 0.75rem 1rem;
-  background: var(--champagne);
-  color: #1a1210;
+  background: var(--cream);
+  color: #001a40;
 }
 
 .skip-link:focus {
@@ -136,7 +145,7 @@ html.gallery-complete .webgl-canvas {
   padding: 0.55rem 0.85rem;
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: rgba(7, 6, 10, 0.55);
+  background: rgba(0, 15, 40, 0.62);
   backdrop-filter: blur(10px);
   font: inherit;
   font-size: 0.72rem;
@@ -148,7 +157,7 @@ html.gallery-complete .webgl-canvas {
 
 .sound-toggle[aria-pressed='true'] {
   color: var(--ink);
-  border-color: rgba(212, 180, 131, 0.45);
+  border-color: rgba(254, 244, 175, 0.45);
 }
 
 .sound-toggle__dot {
@@ -219,8 +228,8 @@ html.gallery-complete .webgl-canvas {
   font-style: italic;
   letter-spacing: 0.04em;
   text-transform: none;
-  color: rgba(239, 228, 231, 0.45);
-  border-bottom: 1px solid rgba(212, 180, 131, 0.28);
+  color: rgba(254, 244, 175, 0.5);
+  border-bottom: 1px solid rgba(254, 244, 175, 0.32);
   padding-bottom: 0.05rem;
 }
 
@@ -283,7 +292,7 @@ html.gallery-complete .webgl-canvas {
   font-style: italic;
   letter-spacing: 0.02em;
   text-transform: none;
-  color: rgba(239, 228, 231, 0.42);
+  color: rgba(254, 244, 175, 0.42);
 }
 
 .gallery-hud__gesture {
@@ -292,7 +301,7 @@ html.gallery-complete .webgl-canvas {
   font-family: var(--font-body);
   font-size: 0.85rem;
   font-style: italic;
-  color: rgba(239, 228, 231, 0.35);
+  color: rgba(254, 244, 175, 0.38);
 }
 
 .gallery-hud__chrome {
@@ -310,7 +319,7 @@ html.gallery-complete .webgl-canvas {
   font-size: 0.62rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: rgba(239, 228, 231, 0.4);
+  color: rgba(254, 244, 175, 0.42);
   background: none;
   border: none;
   border-bottom: 1px solid transparent;
@@ -328,7 +337,7 @@ html.gallery-complete .webgl-canvas {
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.16em;
   font-size: 0.62rem;
-  color: rgba(239, 228, 231, 0.38);
+  color: rgba(254, 244, 175, 0.4);
 }
 
 .gallery__progress-sep {
@@ -374,12 +383,12 @@ html[data-chapter='finale'] .memories-overlay {
 .finale-overlay {
   /* Handwriting stage owns its own fade; keep transform reset */
   transform: none;
-  /* Dark rose wash — shared palette with Atmosphere finale */
+  /* Deep navy wash — cream/rose handwriting reads on cobalt grounds */
   background: radial-gradient(
     120% 90% at 50% 40%,
-    rgba(58, 21, 36, 0) 0%,
-    rgba(34, 14, 24, 0) 40%,
-    rgba(20, 8, 16, 0) 100%
+    rgba(0, 71, 171, 0) 0%,
+    rgba(0, 42, 102, 0) 40%,
+    rgba(0, 15, 40, 0) 100%
   );
   transition:
     opacity 1.35s var(--ease-out),
@@ -389,9 +398,9 @@ html[data-chapter='finale'] .memories-overlay {
 .finale-overlay.is-active {
   background: radial-gradient(
     115% 85% at 50% 42%,
-    rgba(58, 21, 36, 0.88) 0%,
-    rgba(34, 14, 24, 0.94) 42%,
-    rgba(20, 8, 16, 0.98) 78%
+    rgba(0, 71, 171, 0.55) 0%,
+    rgba(0, 42, 102, 0.9) 38%,
+    rgba(0, 15, 40, 0.98) 78%
   );
 }
 
@@ -453,7 +462,7 @@ html.gallery-complete .gallery-hud .hand {
   font-size: 0.62rem;
   letter-spacing: 0.18em;
   text-transform: uppercase;
-  color: rgba(196, 164, 148, 0.7);
+  color: rgba(254, 244, 175, 0.62);
 }
 
 .letter__body {
@@ -473,7 +482,7 @@ html.gallery-complete .gallery-hud .hand {
 .letter__p:first-child {
   font-family: var(--font-display);
   font-size: clamp(1.05rem, 2.3vw, 1.35rem);
-  color: rgba(239, 228, 231, 0.92);
+  color: rgba(254, 248, 212, 0.95);
 }
 
 .letter__signoff {
@@ -504,7 +513,7 @@ html.gallery-complete .gallery-hud .hand {
   font-size: clamp(1.35rem, 3.2vw, 2.1rem);
   font-weight: 500;
   letter-spacing: 0.02em;
-  color: rgba(239, 228, 231, 0.88);
+  color: rgba(254, 248, 212, 0.9);
 }
 
 .memories__active {
@@ -541,18 +550,18 @@ html.gallery-complete .gallery-hud .hand {
 .finale-write__msg {
   margin-top: 2.6vh;
   text-align: center;
-  color: #f3e4e8;
+  color: var(--cream);
   max-width: min(88vw, 520px);
   text-shadow:
-    0 1px 0 rgba(14, 8, 13, 0.85),
-    0 8px 28px rgba(14, 8, 13, 0.75);
+    0 1px 0 rgba(0, 15, 40, 0.9),
+    0 8px 28px rgba(0, 15, 40, 0.75);
 }
 
 .finale-write__rule {
   width: min(200px, 36vw);
   height: 1px;
   margin: 0 auto 2.4vh;
-  background: linear-gradient(90deg, transparent, var(--rose-mid), transparent);
+  background: linear-gradient(90deg, transparent, var(--cream), transparent);
   transform: scaleX(0);
   opacity: 0.85;
   transform-origin: center;
@@ -566,7 +575,7 @@ html.gallery-complete .gallery-hud .hand {
   font-weight: 400;
   letter-spacing: 0.01em;
   line-height: 1.55;
-  color: #f6e8ec;
+  color: var(--cream);
   text-wrap: pretty;
 }
 

@@ -8,11 +8,12 @@ import {
 import type { QualityTier } from '../utils/quality'
 import { particleBudget } from '../utils/quality'
 
+/** Cobalt navy grounds + cream dust — shared across chapter crossfades */
 const PALETTES = {
-  gallery: ['#0e080d', '#1a0e17', '#2a1522'],
-  letter: ['#120a12', '#1c1018', '#321820'],
-  memories: ['#0c0810', '#18121c', '#2c1824'],
-  finale: ['#140810', '#220e18', '#3a1524'],
+  gallery: ['#000f28', '#001a40', '#002a66'],
+  letter: ['#00101f', '#001a40', '#003980'],
+  memories: ['#000c20', '#001838', '#0047ab'],
+  finale: ['#000f28', '#001a40', '#002a66'],
 } as const
 
 export class Atmosphere {
@@ -59,10 +60,11 @@ export class Atmosphere {
       seeds[i] = Math.random()
     }
     const colors = new Float32Array(budget * 3)
+    // Butter cream dust motes
     for (let i = 0; i < budget; i++) {
-      colors[i * 3] = 0.91
-      colors[i * 3 + 1] = 0.79
-      colors[i * 3 + 2] = 0.63
+      colors[i * 3] = 0.996
+      colors[i * 3 + 1] = 0.957
+      colors[i * 3 + 2] = 0.686
     }
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -80,7 +82,7 @@ export class Atmosphere {
         uTime: { value: 0 },
         uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.75) },
         uSize: { value: tier === 'low' ? 28 : 42 },
-        uColor: { value: new THREE.Color('#e8c9a0') },
+        uColor: { value: new THREE.Color('#fef4af') },
         uColorMix: { value: 1 },
       },
     })

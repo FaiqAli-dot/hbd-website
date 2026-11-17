@@ -80,7 +80,7 @@ export class Experience {
       // 'default' is more stable on Safari/WebKit than high-performance
       powerPreference: isWebKit ? 'default' : 'high-performance',
     })
-    this.renderer.setClearColor('#0b080c')
+    this.renderer.setClearColor('#000f28')
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
@@ -94,11 +94,11 @@ export class Experience {
     this.scene.add(this.atmosphere.background)
     this.scene.add(this.atmosphere.group)
 
-    const key = new THREE.DirectionalLight('#ffd7b0', 0.55)
+    const key = new THREE.DirectionalLight('#fef4af', 0.55)
     key.position.set(3, 5, 4)
-    const rim = new THREE.DirectionalLight('#8aa0c8', 0.18)
+    const rim = new THREE.DirectionalLight('#6a9ad4', 0.22)
     rim.position.set(-4, 1, -2)
-    const amb = new THREE.AmbientLight('#1c1820', 0.35)
+    const amb = new THREE.AmbientLight('#001a40', 0.4)
     this.scene.add(key, rim, amb)
 
     this.gallery = new GalleryWorld()
@@ -389,9 +389,9 @@ export class Experience {
      * content feels glued to the finger — finger left → world/content left →
      * camera travels right along the Bezier toward the next print.
      */
-    const COMMIT_DIST = 0.34 // full commit ≈ 34% of viewport axis (snappier short flicks)
-    const COMMIT_PROGRESS = 0.22
-    const FLICK_VX = 520
+    const COMMIT_DIST = 0.36 // full commit ≈ 36% of viewport axis
+    const COMMIT_PROGRESS = 0.26
+    const FLICK_VX = 560
     let scrubExpected: GestureDirection | 'scroll-up' | null = null
     let rubber = 0
     let lastFingerProgress = 0
@@ -471,18 +471,15 @@ export class Experience {
           return
         }
         const { progress, wrong } = progressForDrag(scrubExpected, dx, dy, axis)
+        // Latest finger sample (not lagged display — display lag must not force commits)
         const finger = Math.max(progress, lastFingerProgress)
-        const live = this.gallery.getDragState().progress
         const flick =
           scrubExpected === 'left' || scrubExpected === 'right'
             ? (scrubExpected === 'left' ? -vx : vx)
             : scrubExpected === 'up'
               ? -vy
               : vy
-        // Commit from finger path, smoothed display, or flick momentum
-        const commit =
-          !wrong &&
-          (finger >= COMMIT_PROGRESS || live >= COMMIT_PROGRESS || flick > FLICK_VX)
+        const commit = !wrong && (finger >= COMMIT_PROGRESS || flick > FLICK_VX)
         this.gallery.endScrub({ commit, velocity: Math.max(flick, 0) })
         if (!commit && wrong) this.gallery.shakeHint(this.gallery.group)
         scrubExpected = null

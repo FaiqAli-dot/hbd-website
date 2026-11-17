@@ -82,9 +82,9 @@ export class MemoriesWorld {
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(place.s * 1.02, place.s * 1.12, 64),
         new THREE.MeshBasicMaterial({
-          color: '#d4b483',
+          color: '#fef4af',
           transparent: true,
-          opacity: 0.25,
+          opacity: 0.28,
           side: THREE.DoubleSide,
         }),
       )
@@ -93,9 +93,9 @@ export class MemoriesWorld {
       const halo = new THREE.Mesh(
         new THREE.CircleGeometry(place.s * 1.35, 64),
         new THREE.MeshBasicMaterial({
-          color: '#c9a66b',
+          color: '#0047ab',
           transparent: true,
-          opacity: 0.05,
+          opacity: 0.12,
           depthWrite: false,
         }),
       )
@@ -144,9 +144,9 @@ export class MemoriesWorld {
     // Soft rose seed — also the permanent look on fragile WebKit (no media decode)
     if (ctx) {
       const g = ctx.createRadialGradient(128, 128, 20, 128, 128, 140)
-      g.addColorStop(0, '#e8b4bc')
-      g.addColorStop(0.55, '#a86474')
-      g.addColorStop(1, '#4a2430')
+      g.addColorStop(0, '#fef4af')
+      g.addColorStop(0.55, '#0047ab')
+      g.addColorStop(1, '#001a40')
       ctx.fillStyle = g
       ctx.fillRect(0, 0, 256, 256)
     }

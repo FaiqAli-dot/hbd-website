@@ -77,12 +77,14 @@ async function runDesktop() {
   await unlockGallery(page)
 
   // Mid Ch1→Ch2: start scroll into letter field
+  await shot(page, 't12-palette-ch1-gallery-desktop')
   await scrollToPanel(page, '#chapter-letter', -80)
   await page.waitForTimeout(700)
   await shot(page, 't12-mid-ch1-to-ch2')
   await scrollToPanel(page, '#chapter-letter', 40)
   await page.waitForTimeout(1100)
   await shot(page, 't12-letter-desktop')
+  await shot(page, 't12-palette-ch2-letter-desktop')
 
   // Mid Ch2→Ch3
   await scrollToPanel(page, '#chapter-memories', -220)
@@ -91,6 +93,7 @@ async function runDesktop() {
   await scrollToPanel(page, '#chapter-memories', 40)
   await page.waitForTimeout(1400)
   await shot(page, 't12-memories-desktop')
+  await shot(page, 't12-palette-ch3-memories-desktop')
 
   // Mid Ch3→Ch4
   await scrollToPanel(page, '#chapter-finale', -260)
@@ -100,6 +103,7 @@ async function runDesktop() {
   // Wait through handwriting + message reveal
   await page.waitForTimeout(14000)
   await shot(page, 't12-finale-message-desktop')
+  await shot(page, 't12-palette-ch4-finale-desktop')
 
   await browser.close()
 }
@@ -119,6 +123,7 @@ async function runMobile() {
   const page = await context.newPage()
   await unlockGallery(page)
 
+  await shot(page, 't12-palette-ch1-gallery-mobile')
   await scrollToPanel(page, '#chapter-letter', 40)
   await page.waitForTimeout(1200)
   // Letter top
@@ -128,6 +133,7 @@ async function runMobile() {
   })
   await page.waitForTimeout(400)
   await shot(page, 't12-letter-top-mobile')
+  await shot(page, 't12-palette-ch2-letter-mobile')
 
   // Letter bottom — scroll overlay to end
   await page.evaluate(() => {
@@ -137,9 +143,14 @@ async function runMobile() {
   await page.waitForTimeout(500)
   await shot(page, 't12-letter-bottom-mobile')
 
+  await scrollToPanel(page, '#chapter-memories', 40)
+  await page.waitForTimeout(1400)
+  await shot(page, 't12-palette-ch3-memories-mobile')
+
   await scrollToPanel(page, '#chapter-finale', 40)
   await page.waitForTimeout(14000)
   await shot(page, 't12-finale-message-mobile')
+  await shot(page, 't12-palette-ch4-finale-mobile')
 
   await browser.close()
 }

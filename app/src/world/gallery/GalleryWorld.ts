@@ -78,9 +78,9 @@ void main() {
   float l = dot(c, vec3(0.299, 0.587, 0.114));
   float sweep = smoothstep(uReveal * 1.6 - 0.35, uReveal * 1.6 - 0.05, (vUv.x * 0.45 + (1.0 - vUv.y) * 0.55));
   float lit = 1.0 - sweep;
-  vec3 dark = vec3(l) * vec3(0.065, 0.048, 0.058) + vec3(0.004, 0.0025, 0.0035);
+  vec3 dark = vec3(l) * vec3(0.035, 0.055, 0.11) + vec3(0.002, 0.004, 0.012);
   float edge = 1.0 - smoothstep(0.0, 0.035, min(min(vUv.x, 1.0 - vUv.x), min(vUv.y, 1.0 - vUv.y)));
-  dark += edge * vec3(0.06, 0.032, 0.04);
+  dark += edge * vec3(0.04, 0.08, 0.16);
   vec3 col = mix(dark, c * (0.80 + 0.08 * uFocus), lit);
   float f = 1.0 - exp(-pow(uFogD * vDepth, 2.0));
   col = mix(col, uFog, clamp(f, 0.0, 0.96));
@@ -142,7 +142,7 @@ export class GalleryWorld {
   private readonly scrubOmega = 38
 
   constructor() {
-    const BG = new THREE.Color('#0b080c')
+    const BG = new THREE.Color('#000f28')
     this.group.position.set(0, 0, 0)
 
     const maxTex = textureMaxSize(detectQuality())
@@ -165,7 +165,7 @@ export class GalleryWorld {
       mesh.position.z = 0.03
       const back = new THREE.Mesh(
         new THREE.BoxGeometry(p.size[0], p.size[1], 0.024),
-        new THREE.MeshBasicMaterial({ color: '#2a2226' }),
+        new THREE.MeshBasicMaterial({ color: '#001a40' }),
       )
       g.add(back, mesh)
       g.position.fromArray(p.pos)
@@ -341,8 +341,8 @@ export class GalleryWorld {
 
     const budget = detectQuality() === 'low' ? 900 : detectQuality() === 'medium' ? 1600 : 2600
     this.dustMats.push(
-      this.makeDust(budget, [16, 10, -44, 16], 5, 0.55, '#f3d9c8', '#e8a6b6', 7),
-      this.makeDust(Math.floor(budget * 0.03), [34, 18, -70, -30], 120, 0.1, '#d98fa0', '#e9c58a', 11),
+      this.makeDust(budget, [16, 10, -44, 16], 5, 0.55, '#fef4af', '#a8c4e8', 7),
+      this.makeDust(Math.floor(budget * 0.03), [34, 18, -70, -30], 120, 0.1, '#6a9ad4', '#e8d98a', 11),
     )
     void BG
   }

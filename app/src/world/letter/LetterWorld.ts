@@ -50,7 +50,7 @@ export class LetterWorld {
       const rim = new THREE.Mesh(
         new THREE.RingGeometry(place.s * 0.98, place.s * 1.06, 64),
         new THREE.MeshBasicMaterial({
-          color: '#e8c9a0',
+          color: '#fef4af',
           transparent: true,
           opacity: 0,
           side: THREE.DoubleSide,
