@@ -13,6 +13,9 @@ interface Portal {
   label: string
   rest: { x: number; y: number; z: number; s: number }
   videoBound: boolean
+  /** Canvas blit target — avoids THREE.VideoTexture (crashes some WebKit/WPE builds) */
+  frameCanvas: HTMLCanvasElement | null
+  frameCtx: CanvasRenderingContext2D | null
 }
 
 export class MemoriesWorld {
@@ -110,26 +113,48 @@ export class MemoriesWorld {
         label: mem.label,
         rest: place,
         videoBound: false,
+        frameCanvas: null,
+        frameCtx: null,
       })
     })
   }
 
-  /** Bind VideoTexture lazily — safe for Safari/WebKit after first paint */
+  /**
+   * Bind video via CanvasTexture (drawImage blit). Avoids THREE.VideoTexture,
+   * which hard-crashes Playwright WPE / some WebKit GPU paths.
+   */
   private bindVideoTexture(p: Portal): void {
     if (p.videoBound) return
     p.videoBound = true
     const src = p.video.dataset.src
     if (src) p.video.src = src
+    const canvas = document.createElement('canvas')
+    canvas.width = 256
+    canvas.height = 256
+    const ctx = canvas.getContext('2d', { alpha: false })
+    p.frameCanvas = canvas
+    p.frameCtx = ctx
+    // Seed with soft rose so portals aren't empty before first frame
+    if (ctx) {
+      ctx.fillStyle = '#c48a96'
+      ctx.fillRect(0, 0, 256, 256)
+    }
+    const ct = new THREE.CanvasTexture(canvas)
+    ct.colorSpace = THREE.SRGBColorSpace
+    ct.minFilter = THREE.LinearFilter
+    ct.magFilter = THREE.LinearFilter
+    p.texture.dispose()
+    p.texture = ct
+    p.material.uniforms.uMap.value = ct
+  }
+
+  private blitVideoFrame(p: Portal): void {
+    if (!p.frameCtx || !p.frameCanvas || p.video.readyState < 2) return
     try {
-      const vt = new THREE.VideoTexture(p.video)
-      vt.colorSpace = THREE.SRGBColorSpace
-      vt.minFilter = THREE.LinearFilter
-      vt.magFilter = THREE.LinearFilter
-      p.texture.dispose()
-      p.texture = vt
-      p.material.uniforms.uMap.value = vt
+      p.frameCtx.drawImage(p.video, 0, 0, p.frameCanvas.width, p.frameCanvas.height)
+      p.texture.needsUpdate = true
     } catch {
-      // Keep placeholder if VideoTexture is unavailable
+      /* decode / CORS */
     }
   }
 
@@ -360,11 +385,14 @@ export class MemoriesWorld {
 
   update(time: number): void {
     this.portals.forEach((p, i) => {
-      p.texture.needsUpdate = p.playing
+      if (p.playing) this.blitVideoFrame(p)
       if (!this.entered) return
       p.group.position.y += Math.sin(time * 0.5 + i) * 0.0006
       const targetScale = p.playing ? 1.08 : 1
-      p.group.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.08)
+      const s = p.group.scale
+      s.x += (targetScale - s.x) * 0.08
+      s.y += (targetScale - s.y) * 0.08
+      s.z += (targetScale - s.z) * 0.08
     })
   }
 
