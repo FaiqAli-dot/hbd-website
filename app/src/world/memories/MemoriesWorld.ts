@@ -710,28 +710,15 @@ export class MemoriesWorld {
   private enlargePortal(p: Portal): void {
     if (p.phase !== 'rest') return
     p.phase = 'expanding'
-    // Park others fully out of sight so enlarge reads as a single centred player
+    // Hide others completely while one portal is the player
     this.portals.forEach((other) => {
       if (other === p) return
       gsap.killTweensOf(other.group.position)
       gsap.killTweensOf(other.group.scale)
-      gsap.to(other.material.uniforms.uOpacity, { value: 0, duration: 0.35 })
-      gsap.to(other.material.uniforms.uGlow, { value: 0, duration: 0.2 })
-      gsap.to(other.halo.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.2 })
-      gsap.to(other.group.position, {
-        x: other.rest.x * 2.2,
-        y: other.rest.y * 2.2,
-        z: other.rest.z - 2,
-        duration: 0.5,
-        ease: 'power2.in',
-      })
-      gsap.to(other.group.scale, {
-        x: other.rest.s * 0.35,
-        y: other.rest.s * 0.35,
-        z: other.rest.s * 0.35,
-        duration: 0.5,
-        ease: 'power2.in',
-      })
+      other.material.uniforms.uOpacity.value = 0
+      other.material.uniforms.uGlow.value = 0
+      ;(other.halo.material as THREE.MeshBasicMaterial).opacity = 0
+      other.group.visible = false
     })
 
     const narrow = this.aspect < 0.75
@@ -798,26 +785,13 @@ export class MemoriesWorld {
 
     // Restore others to rest poses
     this.portals.forEach((other) => {
+      other.group.visible = true
+      other.group.position.set(other.rest.x, other.rest.y, other.rest.z)
+      other.group.scale.setScalar(other.rest.s)
       gsap.to(other.material.uniforms.uOpacity, {
         value: other.watched ? 0.92 : other === p ? 1 : 0.62,
         duration: 0.4,
       })
-      if (other !== p && other.phase === 'rest') {
-        gsap.to(other.group.position, {
-          x: other.rest.x,
-          y: other.rest.y,
-          z: other.rest.z,
-          duration: 0.5,
-          ease: 'power2.out',
-        })
-        gsap.to(other.group.scale, {
-          x: other.rest.s,
-          y: other.rest.s,
-          z: other.rest.s,
-          duration: 0.5,
-          ease: 'power2.out',
-        })
-      }
     })
 
     if (this.allWatched()) {

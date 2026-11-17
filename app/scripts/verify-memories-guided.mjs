@@ -221,7 +221,7 @@ async function runSuite(browserType, label, contextOpts) {
         10000,
       )
       if (i === 0) {
-        await page.waitForTimeout(450)
+        await page.waitForTimeout(800)
         await page.screenshot({
           path: path.join(OUT, `ch3-${label}-enlarged.png`),
           fullPage: false,
