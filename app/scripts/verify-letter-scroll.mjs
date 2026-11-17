@@ -34,9 +34,10 @@ async function swipePointer(page, direction) {
 }
 
 async function unlockToLetter(page, preferKeyboard = false) {
-  await page.goto(BASE + '?v=' + Date.now(), { waitUntil: 'networkidle', timeout: 60000 })
+  await page.goto(BASE + '?v=' + Date.now(), { waitUntil: 'domcontentloaded', timeout: 60000 })
   await page.waitForSelector('.webgl-canvas', { timeout: 30000 })
-  await page.waitForTimeout(700)
+  await page.waitForSelector('[data-gallery-hud]', { timeout: 30000 })
+  await page.waitForTimeout(900)
   await page.locator('.webgl-canvas').click({ position: { x: 160, y: 220 } }).catch(() => {})
 
   const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']

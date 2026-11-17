@@ -4,7 +4,11 @@ export function detectQuality(): QualityTier {
   const cores = navigator.hardwareConcurrency || 4
   const mem = (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 4
   const isMobile = window.matchMedia('(max-width: 820px), (pointer: coarse)').matches
-  if (isMobile || cores <= 4 || mem <= 2) return 'low'
+  const isWebKit =
+    /AppleWebKit/i.test(navigator.userAgent) &&
+    !/Chrome|Chromium|Edg|Android/i.test(navigator.userAgent)
+  // Safari/WebKit: keep budgets conservative (also stabilizes Playwright WPE)
+  if (isWebKit || isMobile || cores <= 4 || mem <= 2) return 'low'
   if (cores <= 6 || mem <= 4) return 'medium'
   return 'high'
 }

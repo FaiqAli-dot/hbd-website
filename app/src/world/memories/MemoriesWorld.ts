@@ -7,11 +7,12 @@ interface Portal {
   group: THREE.Group
   mesh: THREE.Mesh
   video: HTMLVideoElement
-  texture: THREE.VideoTexture
+  texture: THREE.Texture
   material: THREE.ShaderMaterial
   playing: boolean
   label: string
   rest: { x: number; y: number; z: number; s: number }
+  videoBound: boolean
 }
 
 export class MemoriesWorld {
@@ -34,25 +35,33 @@ export class MemoriesWorld {
     memoryVideos.forEach((mem, i) => {
       const place = layout[i]
       const video = document.createElement('video')
-      video.src = mem.src
       video.crossOrigin = 'anonymous'
       video.loop = true
       video.muted = true
       video.playsInline = true
-      video.preload = i === 0 ? 'metadata' : 'none'
+      // Defer src + VideoTexture until entrance — early VideoTexture crashes some WebKit/WPE builds
+      video.preload = 'none'
       video.setAttribute('playsinline', '')
       video.setAttribute('muted', '')
+      video.dataset.src = mem.src
 
-      const texture = new THREE.VideoTexture(video)
-      texture.colorSpace = THREE.SRGBColorSpace
-      texture.minFilter = THREE.LinearFilter
-      texture.magFilter = THREE.LinearFilter
+      // 1×1 rose placeholder until the real video frame is bound
+      const placeholder = new THREE.DataTexture(
+        new Uint8Array([210, 140, 150, 255]),
+        1,
+        1,
+        THREE.RGBAFormat,
+      )
+      placeholder.needsUpdate = true
+      placeholder.colorSpace = THREE.SRGBColorSpace
+      placeholder.minFilter = THREE.LinearFilter
+      placeholder.magFilter = THREE.LinearFilter
 
       const material = new THREE.ShaderMaterial({
         transparent: true,
         depthWrite: false,
         uniforms: {
-          uMap: { value: texture },
+          uMap: { value: placeholder },
           uSoft: { value: 0.06 },
           uBoost: { value: 0 },
           uOpacity: { value: 0 },
@@ -95,13 +104,33 @@ export class MemoriesWorld {
         group: portalGroup,
         mesh,
         video,
-        texture,
+        texture: placeholder,
         material,
         playing: false,
         label: mem.label,
         rest: place,
+        videoBound: false,
       })
     })
+  }
+
+  /** Bind VideoTexture lazily — safe for Safari/WebKit after first paint */
+  private bindVideoTexture(p: Portal): void {
+    if (p.videoBound) return
+    p.videoBound = true
+    const src = p.video.dataset.src
+    if (src) p.video.src = src
+    try {
+      const vt = new THREE.VideoTexture(p.video)
+      vt.colorSpace = THREE.SRGBColorSpace
+      vt.minFilter = THREE.LinearFilter
+      vt.magFilter = THREE.LinearFilter
+      p.texture.dispose()
+      p.texture = vt
+      p.material.uniforms.uMap.value = vt
+    } catch {
+      // Keep placeholder if VideoTexture is unavailable
+    }
   }
 
   layoutTargets(): Array<{ x: number; y: number; z: number; s: number }> {
@@ -186,11 +215,14 @@ export class MemoriesWorld {
   playEntrance(): void {
     if (this.entered) return
     this.entered = true
-    // Warm video decode so portal color sampling has real frames
+    // Bind video textures + warm decode only once portals are on stage
     this.portals.forEach((p) => {
-      if (p.video.preload === 'none') {
-        p.video.preload = 'auto'
+      this.bindVideoTexture(p)
+      p.video.preload = 'auto'
+      try {
         p.video.load()
+      } catch {
+        /* ignore */
       }
     })
     this.portals.forEach((p, i) => {

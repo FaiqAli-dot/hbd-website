@@ -70,11 +70,15 @@ export class Experience {
     this.canvas.setAttribute('aria-hidden', 'true')
     app.appendChild(this.canvas)
 
+    const isWebKit =
+      /AppleWebKit/i.test(navigator.userAgent) &&
+      !/Chrome|Chromium|Edg|Android/i.test(navigator.userAgent)
     this.renderer = new THREE.WebGLRenderer({
       canvas: this.canvas,
-      antialias: this.tier === 'high',
+      antialias: this.tier === 'high' && !isWebKit,
       alpha: false,
-      powerPreference: 'high-performance',
+      // 'default' is more stable on Safari/WebKit than high-performance
+      powerPreference: isWebKit ? 'default' : 'high-performance',
     })
     this.renderer.setClearColor('#0b080c')
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
