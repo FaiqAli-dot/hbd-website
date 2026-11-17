@@ -53,7 +53,11 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
     </div>
 
     <section class="letter-overlay" data-letter-overlay aria-hidden="true">
-      <p class="letter__eyebrow letter-reveal" data-reveal-group="0">${letterCopy.eyebrow}</p>
+      ${
+        letterCopy.eyebrow
+          ? `<p class="letter__eyebrow letter-reveal" data-reveal-group="0">${letterCopy.eyebrow}</p>`
+          : ''
+      }
       <div class="letter__body">
         ${letterCopy.paragraphs
           .map(
@@ -62,10 +66,14 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
           )
           .join('')}
       </div>
-      <footer class="letter__signoff letter-reveal" data-reveal-group="${letterCopy.paragraphs.length + 1}">
-        <span>${letterCopy.signoff}</span>
-        <strong>${letterCopy.signature}</strong>
-      </footer>
+      ${
+        letterCopy.signoff || letterCopy.signature
+          ? `<footer class="letter__signoff letter-reveal" data-reveal-group="${letterCopy.paragraphs.length + 1}">
+        ${letterCopy.signoff ? `<span>${letterCopy.signoff}</span>` : ''}
+        ${letterCopy.signature ? `<strong>${letterCopy.signature}</strong>` : ''}
+      </footer>`
+          : ''
+      }
     </section>
 
     <div class="memories-overlay" data-memories-overlay aria-hidden="true">
@@ -79,14 +87,13 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
         <svg class="finale-write__svg" id="finale-write-svg" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"></svg>
         <div class="finale-write__msg" data-finale-msg>
           <div class="finale-write__rule" data-finale-rule></div>
-          <p class="finale-write__sub" data-finale-sub></p>
-          <p class="finale-write__closing" data-finale-closing></p>
-          <p class="finale-write__sig" data-finale-sig></p>
+          <div class="finale-write__stanza" data-finale-sub></div>
+          <div class="finale-write__stanza finale-write__stanza--second" data-finale-closing></div>
         </div>
       </div>
-      <!-- Legacy text kept for reduced-motion / accessibility fallbacks -->
-      <p class="finale__subline" hidden>${finaleCopy.subline}</p>
-      <p class="finale__closing" hidden>${finaleCopy.closing}</p>
+      <!-- Accessibility fallback (visually hidden); populated from stanza copy -->
+      <p class="finale__subline" hidden>${finaleCopy.stanza1.join(' ')}</p>
+      <p class="finale__closing" hidden>${finaleCopy.stanza2.join(' ')}</p>
     </div>
 
     <div class="scroll-space" data-scroll-space aria-hidden="true">
@@ -191,6 +198,7 @@ export function mountOverlays(app: HTMLElement): OverlayApi {
       }
     },
     setChapter: (chapter) => {
+      document.documentElement.dataset.chapter = chapter
       letterOverlay.setAttribute('aria-hidden', String(chapter !== 'letter'))
       memoriesOverlay.setAttribute('aria-hidden', String(chapter !== 'memories'))
       finaleOverlay.setAttribute('aria-hidden', String(chapter !== 'finale'))

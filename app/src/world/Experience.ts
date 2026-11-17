@@ -683,6 +683,7 @@ export class Experience {
 
   private setChapter(chapter: typeof this.chapter): void {
     if (this.chapter === chapter) return
+    const prev = this.chapter
     this.chapter = chapter
     this.atmosphere.setPalette(chapter)
     this.ui.setChapter(chapter)
@@ -694,30 +695,56 @@ export class Experience {
       this.hand3d.setVisible(true)
     }
 
-    // Clamp bloom hard on the handwritten finale — no blown-out white disc
-    this.post.setBloomMul(chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : 0.9)
-    this.renderer.toneMappingExposure = chapter === 'finale' ? 0.88 : 1.0
+    // Soft bloom/exposure crossfade — no hard pop between chapters
+    const bloomTarget = chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : 0.9
+    const exposureTarget = chapter === 'finale' ? 0.88 : 1.0
+    if (prefersReducedMotion()) {
+      this.post.setBloomMul(bloomTarget)
+      this.renderer.toneMappingExposure = exposureTarget
+    } else {
+      const bloomProxy = { v: chapter === 'gallery' ? 0.75 : prev === 'finale' ? 0 : 0.9 }
+      // Read current via stepped lerp from last target approximation
+      gsap.to(bloomProxy, {
+        v: bloomTarget,
+        duration: 1.35,
+        ease: 'power2.inOut',
+        onUpdate: () => this.post.setBloomMul(bloomProxy.v),
+      })
+      gsap.to(this.renderer, {
+        toneMappingExposure: exposureTarget,
+        duration: 1.35,
+        ease: 'power2.inOut',
+      })
+    }
 
     if (chapter === 'letter' && !this.transitionFlags.toLetter) {
       this.transitionFlags.toLetter = true
       this.letter.group.visible = true
       const targets = this.letter.getDiscWorldTargets()
       const handoff = this.gallery.getSettledHandoff()
-      // Square → disc morph happens together AFTER the pull-out collage has settled
+      // Ch1→Ch2: collage drifts into plum haze as letter paper rises
       this.letter.playContinuousFromPhotos(handoff)
       if (!prefersReducedMotion()) {
         this.gallery.morphIntoLetter(targets)
       }
-      this.revealLetterText()
+      // Slight delay so paper rise overlaps camera pull-back into letter field
+      window.setTimeout(
+        () => this.revealLetterText(),
+        prefersReducedMotion() ? 0 : 280,
+      )
     }
 
     if (chapter === 'memories' && !this.transitionFlags.toMemories) {
       this.transitionFlags.toMemories = true
       this.memories.group.visible = true
+      // Ch2→Ch3: letter soft-recedes while portals emerge (overlapping dissolve)
       if (!prefersReducedMotion()) {
         this.letter.expandTowardPortals(this.memories.layoutTargets())
       }
-      this.memories.playEntrance()
+      window.setTimeout(
+        () => this.memories.playEntrance(),
+        prefersReducedMotion() ? 0 : 180,
+      )
     }
 
     if (chapter === 'finale' && !this.transitionFlags.toFinale) {
@@ -725,16 +752,16 @@ export class Experience {
       this.finale.group.visible = true
       const worldPos = this.memories.getWorldPositions()
       const colors = this.memories.samplePortalColors(128)
-      // Portal particles gather into the nib, then dissolve completely before writing
+      // Ch3→Ch4: portals converge/dim into dark-rose finale — overlapped with dissolve
       this.finale.playFromPortals(worldPos, colors)
       this.memories.dissolve()
       this.letter.dissolveForFinale()
-      // Hard-hide leftovers so no gold rings / portal discs remain behind the ink
+      // Delayed hide after crossfade completes — no black frame mid-transition
       window.setTimeout(() => {
         this.letter.group.visible = false
         this.memories.group.visible = false
         this.gallery.group.visible = false
-      }, 1400)
+      }, 1800)
     }
   }
 

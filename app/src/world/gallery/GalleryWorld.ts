@@ -117,6 +117,9 @@ export class GalleryWorld {
   private tmpQ = new THREE.Quaternion()
   private rollQ = new THREE.Quaternion()
   private fwd = new THREE.Vector3()
+  private tmpPos = new THREE.Vector3()
+  private tmpPos2 = new THREE.Vector3()
+  private tmpRight = new THREE.Vector3()
   private threadMat: THREE.ShaderMaterial | null = null
   private threadU: number[] = []
   private fov = 44
@@ -125,11 +128,18 @@ export class GalleryWorld {
   private pullOutActive = false
   private pullOutDone = false
   private dustMats: THREE.ShaderMaterial[] = []
-  /** Direct finger scrub — path progress tracks pointer 1:1 (no anticipation ease) */
+  /** Direct finger scrub — path progress tracks pointer via critically-damped follow */
   private scrubbing = false
   private scrubPathIdx = -1
   private scrubTween: gsap.core.Tween | null = null
   private useLinearPath = false
+  /** Finger target (raw) vs displayed path progress (smoothed) */
+  private scrubTarget = 0
+  private scrubDisplay = 0
+  private scrubVel = 0
+  private scrubLastT = 0
+  /** Critically-damped omega — responsive, low lag, no jitter */
+  private readonly scrubOmega = 28
 
   constructor() {
     const BG = new THREE.Color('#0b080c')
@@ -525,19 +535,49 @@ export class GalleryWorld {
     this.useLinearPath = true
     this.scrubPathIdx = pathIdx
     this.moving = true
+    this.scrubTarget = 0
+    this.scrubDisplay = 0
+    this.scrubVel = 0
+    this.scrubLastT = performance.now()
     this.state = { k: pathIdx, t: 0 }
     this.captionCb?.(null)
     return { expected, pathIdx }
   }
 
-  /** Map 0..1 finger progress onto the active scrub path (1:1). */
+  /** Map 0..1 finger progress onto the active scrub path (smoothed toward target). */
   scrubTo(progress: number): void {
     if (!this.scrubbing) return
-    this.state.t = THREE.MathUtils.clamp(progress, 0, 1)
+    this.scrubTarget = THREE.MathUtils.clamp(progress, 0, 1)
   }
 
   getScrubProgress(): number {
     return this.scrubbing || this.useLinearPath ? this.state.t : memoryGlideEase(this.state.t)
+  }
+
+  /** Advance critically-damped scrub display toward finger target. Call each frame while scrubbing. */
+  private tickScrubSmooth(now = performance.now()): void {
+    if (!this.scrubbing) return
+    const dt = Math.min(0.05, Math.max(0.001, (now - this.scrubLastT) / 1000))
+    this.scrubLastT = now
+    // Critically damped spring toward scrubTarget
+    const omega = this.scrubOmega
+    const x = this.scrubDisplay
+    const target = this.scrubTarget
+    const v = this.scrubVel
+    // Semi-implicit Euler: a = -2ωv - ω²(x − target)
+    const a = -2 * omega * v - omega * omega * (x - target)
+    this.scrubVel = v + a * dt
+    let next = x + this.scrubVel * dt
+    // Soft clamp at endpoints — no hard snap, bleed velocity out
+    if (next < 0) {
+      next = 0
+      this.scrubVel *= 0.35
+    } else if (next > 1) {
+      next = 1
+      this.scrubVel *= 0.35
+    }
+    this.scrubDisplay = next
+    this.state.t = this.scrubDisplay
   }
 
   /** Debug/test snapshot of ribbon scrub state */
@@ -558,20 +598,26 @@ export class GalleryWorld {
   }
 
   /**
-   * End scrub: commit forward or spring back from current progress/velocity.
-   * GSAP continues from the live `t` — no jump.
+   * End scrub: commit forward or soft spring-back from live smoothed progress.
+   * Uses flick + spring velocity so the commit tween continues finger momentum.
    */
   endScrub(opts: { commit: boolean; velocity?: number }): void {
     if (!this.scrubbing) return
+    // Flush one last smooth sample so release starts from the displayed pose
+    this.tickScrubSmooth()
     this.scrubbing = false
     const pathIdx = this.scrubPathIdx
     const path = this.paths[pathIdx]
     const nextIdx = pathIdx
-    const from = this.state.t
+    const from = this.scrubDisplay
+    this.state.t = from
     const to = opts.commit ? 1 : 0
     const remaining = Math.abs(to - from)
     if (remaining < 0.001) {
       this.state.t = to
+      this.scrubDisplay = to
+      this.scrubTarget = to
+      this.scrubVel = 0
       this.moving = false
       this.useLinearPath = false
       this.scrubPathIdx = -1
@@ -581,21 +627,34 @@ export class GalleryWorld {
       }
       return
     }
-    // Inherit finger momentum: faster flicks finish quicker
-    const speed = Math.min(2.4, Math.max(0.35, Math.abs(opts.velocity ?? 0) / 900))
-    const duration = Math.max(0.28, Math.min(1.35, (remaining * (path?.duration ?? 2.4)) / (0.85 + speed)))
+    // Progress-units/sec from spring + finger px/s mapped onto path (~900px ≈ full path)
+    const springV = Math.abs(this.scrubVel)
+    const flickV = Math.abs(opts.velocity ?? 0) / 900
+    const progressPerSec = Math.max(springV, flickV * 0.85, 0.28)
+    // Velocity-aware duration: continues momentum instead of restarting from rest
+    let duration = remaining / progressPerSec
+    if (opts.commit) {
+      duration = Math.max(0.22, Math.min(0.95, duration))
+    } else {
+      // Soft spring-back — slightly longer, gentle settle
+      duration = Math.max(0.38, Math.min(1.15, duration * 1.15 + 0.12))
+    }
     const proxy = { t: from }
     this.scrubTween?.kill()
     this.scrubTween = gsap.to(proxy, {
       t: to,
       duration,
-      // Tail of memoryGlide (no anticipation pull-back) — smooth handoff from finger
-      ease: opts.commit ? 'power2.out' : 'power3.out',
+      // Commit: power1.out keeps early velocity; spring-back: sine.out softens endpoints
+      ease: opts.commit ? 'power1.out' : 'sine.out',
       onUpdate: () => {
         this.state.t = proxy.t
+        this.scrubDisplay = proxy.t
       },
       onComplete: () => {
         this.state.t = to
+        this.scrubDisplay = to
+        this.scrubTarget = to
+        this.scrubVel = 0
         this.moving = false
         this.useLinearPath = false
         this.scrubPathIdx = -1
@@ -606,7 +665,7 @@ export class GalleryWorld {
           }
           this.commitArrival(nextIdx)
         } else {
-          // Restored to previous station
+          // Restored to previous station — no visible jump (already at t≈0)
           if (nextIdx === 0) this.state = { k: 0, t: 0 }
           else this.state = { k: nextIdx - 1, t: 1 }
         }
@@ -739,34 +798,41 @@ export class GalleryWorld {
    * Call every frame. Returns current FOV for dolly-zoom.
    */
   applyCamera(camera: THREE.PerspectiveCamera, time: number, parallax = { x: 0, y: 0 }): number {
+    if (this.scrubbing) this.tickScrubSmooth()
+
     const pathIdx = Math.min(this.state.k, this.paths.length - 1)
     const P = this.paths[pathIdx]
     if (!P) return this.fov
 
     const t = this.state.t
-    // Finger scrub / drag settle: 1:1 path progress. Keyboard/wheel: memoryGlide.
+    // Finger scrub / drag settle: linear path. Keyboard/wheel: memoryGlide.
     const e = this.useLinearPath ? t : memoryGlideEase(t)
-    const pos = P.curve.getPoint(THREE.MathUtils.clamp(e, 0, 1))
-    const eo = this.oriEase(Math.min(1, (this.useLinearPath ? t : t) * 1.12))
+    const eClamped = THREE.MathUtils.clamp(e, 0, 1)
+    P.curve.getPoint(eClamped, this.tmpPos)
+    // Continuous orientation slerp — same clock as position (no snap at endpoints)
+    const eo = this.useLinearPath
+      ? eClamped
+      : this.oriEase(Math.min(1, t * 1.12))
     this.tmpQ.copy(P.q0).slerp(P.q1, eo)
 
-    // Banking up to ~3.5°
+    // Banking up to ~3.5° — reuse temps, no per-frame alloc
     const e2 = this.useLinearPath
-      ? Math.min(1, t + 0.01)
+      ? Math.min(1, eClamped + 0.01)
       : memoryGlideEase(Math.min(1, t + 0.01))
-    const vel = P.curve.getPoint(e2).sub(pos)
-    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.tmpQ)
-    const lateral = vel.dot(right) * 60
+    P.curve.getPoint(e2, this.tmpPos2)
+    this.tmpPos2.sub(this.tmpPos)
+    this.tmpRight.set(1, 0, 0).applyQuaternion(this.tmpQ)
+    const lateral = this.tmpPos2.dot(this.tmpRight) * 60
     const roll = THREE.MathUtils.clamp(-lateral * 0.012, -0.061, 0.061) * Math.sin(Math.PI * t)
     this.fwd.set(0, 0, -1)
     this.rollQ.setFromAxisAngle(this.fwd, roll)
     this.tmpQ.multiply(this.rollQ)
 
     // Idle breathe + parallax (additive)
-    pos.x += Math.sin(time * 0.37) * 0.035 + parallax.x * 0.12
-    pos.y += Math.sin(time * 0.29 + 1.3) * 0.028 + parallax.y * 0.08
+    this.tmpPos.x += Math.sin(time * 0.37) * 0.035 + parallax.x * 0.12
+    this.tmpPos.y += Math.sin(time * 0.29 + 1.3) * 0.028 + parallax.y * 0.08
 
-    camera.position.copy(pos)
+    camera.position.copy(this.tmpPos)
     camera.quaternion.copy(this.tmpQ)
 
     // Dolly-zoom pull-out: dramatic pull-back, then settle into a CLOSE
@@ -798,12 +864,12 @@ export class GalleryWorld {
       if (fz > 0.58) {
         const camEase = gsap.parseEase('power2.out')((fz - 0.58) / 0.42)
         const c = this.getCollageCamera()
-        const framed = new THREE.Vector3(c.x, c.y, c.z)
-        const look = new THREE.Vector3(0, c.lookY, -1.1)
-        pos.lerp(framed, camEase)
-        const qFramed = lookQ(framed, look)
+        this.tmpPos2.set(c.x, c.y, c.z)
+        this.tmpRight.set(0, c.lookY, -1.1)
+        this.tmpPos.lerp(this.tmpPos2, camEase)
+        const qFramed = lookQ(this.tmpPos2, this.tmpRight)
         this.tmpQ.slerp(qFramed, camEase)
-        camera.position.copy(pos)
+        camera.position.copy(this.tmpPos)
         camera.quaternion.copy(this.tmpQ)
       }
     }

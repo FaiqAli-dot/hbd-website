@@ -8,12 +8,27 @@ import {
 import type { QualityTier } from '../utils/quality'
 import { particleBudget } from '../utils/quality'
 
+const PALETTES = {
+  gallery: ['#0e080d', '#1a0e17', '#2a1522'],
+  letter: ['#120a12', '#1c1018', '#321820'],
+  memories: ['#0c0810', '#18121c', '#2c1824'],
+  finale: ['#140810', '#220e18', '#3a1524'],
+} as const
+
 export class Atmosphere {
   readonly background: THREE.Mesh
   readonly dust: THREE.Points
   readonly group = new THREE.Group()
   private bgMat: THREE.ShaderMaterial
   private dustMat: THREE.ShaderMaterial
+  private colorA = new THREE.Color(PALETTES.gallery[0])
+  private colorB = new THREE.Color(PALETTES.gallery[1])
+  private colorC = new THREE.Color(PALETTES.gallery[2])
+  private targetA = new THREE.Color(PALETTES.gallery[0])
+  private targetB = new THREE.Color(PALETTES.gallery[1])
+  private targetC = new THREE.Color(PALETTES.gallery[2])
+  private dustSizeTarget = 36
+  private dustVisibleTarget = true
 
   constructor(tier: QualityTier) {
     this.bgMat = new THREE.ShaderMaterial({
@@ -23,9 +38,9 @@ export class Atmosphere {
       uniforms: {
         uTime: { value: 0 },
         uScroll: { value: 0 },
-        uColorA: { value: new THREE.Color('#0e080d') },
-        uColorB: { value: new THREE.Color('#1a0e17') },
-        uColorC: { value: new THREE.Color('#2a1522') },
+        uColorA: { value: this.colorA.clone() },
+        uColorB: { value: this.colorB.clone() },
+        uColorC: { value: this.colorC.clone() },
       },
     })
     this.background = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.bgMat)
@@ -63,7 +78,7 @@ export class Atmosphere {
       fragmentShader: softParticleFragment,
       uniforms: {
         uTime: { value: 0 },
-        uPixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+        uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.75) },
         uSize: { value: tier === 'low' ? 28 : 42 },
         uColor: { value: new THREE.Color('#e8c9a0') },
         uColorMix: { value: 1 },
@@ -74,22 +89,29 @@ export class Atmosphere {
   }
 
   setPalette(chapter: 'gallery' | 'letter' | 'memories' | 'finale'): void {
-    const palettes = {
-      gallery: ['#0e080d', '#1a0e17', '#2a1522'],
-      letter: ['#0c090e', '#16101a', '#2a1a24'],
-      memories: ['#0a070c', '#151018', '#2a1822'],
-      finale: ['#0e080d', '#1a0e17', '#2a1522'],
-    } as const
-    const [a, b, c] = palettes[chapter]
-    this.bgMat.uniforms.uColorA.value.set(a)
-    this.bgMat.uniforms.uColorB.value.set(b)
-    this.bgMat.uniforms.uColorC.value.set(c)
-    // Dim atmospheric dust on finale so it cannot bloom into a white disc
-    this.dustMat.uniforms.uSize.value = chapter === 'finale' ? 12 : chapter === 'gallery' ? 36 : 42
-    this.dust.visible = chapter !== 'finale'
+    const [a, b, c] = PALETTES[chapter]
+    this.targetA.set(a)
+    this.targetB.set(b)
+    this.targetC.set(c)
+    this.dustSizeTarget = chapter === 'finale' ? 12 : chapter === 'gallery' ? 36 : 42
+    this.dustVisibleTarget = chapter !== 'finale'
+    if (this.dustVisibleTarget) this.dust.visible = true
   }
 
   update(time: number, scroll: number): void {
+    // Soft crossfade between chapter palettes — no hard pops / black frames
+    const k = 0.045
+    this.colorA.lerp(this.targetA, k)
+    this.colorB.lerp(this.targetB, k)
+    this.colorC.lerp(this.targetC, k)
+    this.bgMat.uniforms.uColorA.value.copy(this.colorA)
+    this.bgMat.uniforms.uColorB.value.copy(this.colorB)
+    this.bgMat.uniforms.uColorC.value.copy(this.colorC)
+
+    const size = this.dustMat.uniforms.uSize.value as number
+    this.dustMat.uniforms.uSize.value = size + (this.dustSizeTarget - size) * 0.06
+    if (!this.dustVisibleTarget && size < 14) this.dust.visible = false
+
     this.bgMat.uniforms.uTime.value = time
     this.bgMat.uniforms.uScroll.value = scroll
     this.dustMat.uniforms.uTime.value = time

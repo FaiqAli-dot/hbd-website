@@ -28,6 +28,7 @@ export interface GestureOptions {
 /**
  * Pointer/touch gestures with optional 1:1 drag scrub.
  * Uses non-passive touch listeners + touch-action:none on the stage (set by caller).
+ * Move events are coalesced + rAF-batched to keep scrub at display refresh.
  */
 export function attachSwipeGestures(
   el: HTMLElement,
@@ -45,6 +46,37 @@ export function attachSwipeGestures(
   let vx = 0
   let vy = 0
   const AXIS_LOCK_PX = 10
+
+  // rAF-batched move payload (no per-move allocations beyond this slot)
+  let rafId = 0
+  let pendingX = 0
+  let pendingY = 0
+  let hasPending = false
+
+  const flushMove = () => {
+    rafId = 0
+    if (!hasPending || !tracking) return
+    hasPending = false
+    const x = pendingX
+    const y = pendingY
+    const dx = x - startX
+    const dy = y - startY
+    if (!axis) {
+      const absX = Math.abs(dx)
+      const absY = Math.abs(dy)
+      if (Math.max(absX, absY) >= AXIS_LOCK_PX) {
+        axis = absX >= absY ? 'x' : 'y'
+      }
+    }
+    options.onDragMove?.({ x, y, dx, dy, axis })
+  }
+
+  const scheduleMove = (x: number, y: number) => {
+    pendingX = x
+    pendingY = y
+    hasPending = true
+    if (!rafId) rafId = requestAnimationFrame(flushMove)
+  }
 
   const onPointerDown = (e: PointerEvent) => {
     if (options.enabled && !options.enabled()) return
@@ -65,32 +97,34 @@ export function attachSwipeGestures(
   const onPointerMove = (e: PointerEvent) => {
     if (!tracking || (pointerId !== null && e.pointerId !== pointerId)) return
     const now = performance.now()
-    const dt = Math.max(1, now - lastT)
-    const dxStep = e.clientX - lastX
-    const dyStep = e.clientY - lastY
-    // EMA velocity in px/ms → scale to px/s
-    const rawVx = (dxStep / dt) * 1000
-    const rawVy = (dyStep / dt) * 1000
-    vx = vx * 0.7 + rawVx * 0.3
-    vy = vy * 0.7 + rawVy * 0.3
-    lastX = e.clientX
-    lastY = e.clientY
-    lastT = now
-
-    const dx = e.clientX - startX
-    const dy = e.clientY - startY
-    if (!axis) {
-      const absX = Math.abs(dx)
-      const absY = Math.abs(dy)
-      if (Math.max(absX, absY) >= AXIS_LOCK_PX) {
-        axis = absX >= absY ? 'x' : 'y'
-      }
+    // Prefer coalesced samples for smoother velocity + last-known position
+    const coalesced =
+      typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : null
+    const samples = coalesced && coalesced.length ? coalesced : [e]
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i]
+      const dt = Math.max(1, now - lastT)
+      const dxStep = s.clientX - lastX
+      const dyStep = s.clientY - lastY
+      const rawVx = (dxStep / dt) * 1000
+      const rawVy = (dyStep / dt) * 1000
+      vx = vx * 0.72 + rawVx * 0.28
+      vy = vy * 0.72 + rawVy * 0.28
+      lastX = s.clientX
+      lastY = s.clientY
+      lastT = now
     }
-    options.onDragMove?.({ x: e.clientX, y: e.clientY, dx, dy, axis })
+    scheduleMove(lastX, lastY)
   }
 
   const finish = (e: PointerEvent) => {
     if (!tracking || (pointerId !== null && e.pointerId !== pointerId)) return
+    if (rafId) {
+      cancelAnimationFrame(rafId)
+      rafId = 0
+    }
+    // Flush final sample while still tracking so end sees the latest finger pose
+    if (hasPending) flushMove()
     tracking = false
     const dx = e.clientX - startX
     const dy = e.clientY - startY
@@ -119,6 +153,11 @@ export function attachSwipeGestures(
   const onPointerCancel = () => {
     if (!tracking) return
     tracking = false
+    if (rafId) {
+      cancelAnimationFrame(rafId)
+      rafId = 0
+    }
+    hasPending = false
     options.onDragEnd?.({
       x: lastX,
       y: lastY,
@@ -148,6 +187,7 @@ export function attachSwipeGestures(
   el.addEventListener('touchmove', preventTouch, { passive: false })
 
   return () => {
+    if (rafId) cancelAnimationFrame(rafId)
     el.removeEventListener('pointerdown', onPointerDown)
     el.removeEventListener('pointermove', onPointerMove)
     el.removeEventListener('pointerup', finish)

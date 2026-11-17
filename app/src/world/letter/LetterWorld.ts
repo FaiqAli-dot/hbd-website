@@ -227,13 +227,17 @@ export class LetterWorld {
           x: t.x,
           y: t.y,
           z: t.z - 20,
-          duration: 1.35,
-          ease: 'power3.inOut',
+          duration: 1.65,
+          ease: 'power2.inOut',
         },
-        0,
+        i * 0.04,
       )
-      tl.to(mesh.scale, { x: t.s * 1.1, y: t.s * 1.1, z: 1, duration: 1.2, ease: 'power2.inOut' }, 0)
-      tl.to(this.mats[i].uniforms.uOpacity, { value: 0.2, duration: 1.0 }, 0.3)
+      tl.to(
+        mesh.scale,
+        { x: t.s * 1.05, y: t.s * 1.05, z: 1, duration: 1.45, ease: 'power2.inOut' },
+        i * 0.04,
+      )
+      tl.to(this.mats[i].uniforms.uOpacity, { value: 0, duration: 1.25, ease: 'power2.in' }, 0.35 + i * 0.04)
     })
     return tl
   }

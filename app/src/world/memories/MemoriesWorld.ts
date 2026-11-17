@@ -198,19 +198,19 @@ export class MemoriesWorld {
         x: p.rest.x,
         y: p.rest.y,
         z: p.rest.z,
-        duration: 1.25,
-        delay: i * 0.1,
-        ease: 'back.out(1.5)',
+        duration: 1.55,
+        delay: i * 0.12,
+        ease: 'power3.out',
       })
       gsap.to(p.group.scale, {
         x: 1,
         y: 1,
         z: 1,
-        duration: 1.15,
-        delay: i * 0.1,
-        ease: 'power3.out',
+        duration: 1.4,
+        delay: i * 0.12,
+        ease: 'power2.out',
       })
-      gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.7, delay: i * 0.1 })
+      gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 1.05, delay: i * 0.12 + 0.08 })
     })
   }
 

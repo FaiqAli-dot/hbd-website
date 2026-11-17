@@ -587,31 +587,31 @@ export class FinaleWorld {
       })
     }
 
-    // Message words
-    const COPY = {
-      sub: finaleCopy.subline,
-      closing: finaleCopy.closing,
-      sig: '— WITH ALL MY LOVE —',
-    }
+    // Finale message — two stanza groups under the handwritten Happy Birthday
     this.spans = []
-    for (const [key, sel] of [
-      ['sub', '[data-finale-sub]'],
-      ['closing', '[data-finale-closing]'],
-      ['sig', '[data-finale-sig]'],
-    ] as const) {
+    const stanzas: Array<{ sel: string; lines: string[] }> = [
+      { sel: '[data-finale-sub]', lines: finaleCopy.stanza1 },
+      { sel: '[data-finale-closing]', lines: finaleCopy.stanza2 },
+    ]
+    stanzas.forEach(({ sel, lines }) => {
       const el = document.querySelector(sel) as HTMLElement | null
-      if (!el) continue
+      if (!el) return
       el.textContent = ''
-      const text = COPY[key]
-      text.split(' ').forEach((w, i, a) => {
-        const sp = document.createElement('span')
-        sp.textContent = w
-        sp.style.opacity = '0'
-        el.appendChild(sp)
-        if (i < a.length - 1) el.appendChild(document.createTextNode(' '))
-        this.spans.push(sp)
+      lines.forEach((line, li) => {
+        const lineEl = document.createElement('p')
+        lineEl.className = 'finale-write__line'
+        line.split(' ').forEach((w, i, a) => {
+          const sp = document.createElement('span')
+          sp.textContent = w
+          sp.style.opacity = '0'
+          lineEl.appendChild(sp)
+          if (i < a.length - 1) lineEl.appendChild(document.createTextNode(' '))
+          this.spans.push(sp)
+        })
+        el.appendChild(lineEl)
+        void li
       })
-    }
+    })
 
     this.shimmer = []
     this.strokes.forEach((s) => {
@@ -669,28 +669,30 @@ export class FinaleWorld {
     })
 
     marks.inkDone = t
-    t += 650
+    // Brief breath after the handwritten Happy Birthday before the message rises
+    t += 820
     marks.msg = t
 
     const rule = document.querySelector('[data-finale-rule]')
     if (rule) {
-      tl.add(rule, { scaleX: [0, 1], duration: 900, ease: 'out(3)' }, t)
+      tl.add(rule, { scaleX: [0, 1], duration: 1100, ease: 'out(3)' }, t)
     }
     if (this.spans.length) {
+      // Stagger gently so stanzas read as two groups after the writing finishes
       tl.add(
         this.spans,
         {
           opacity: [0, 1],
-          translateY: [10, 0],
-          filter: ['blur(6px)', 'blur(0px)'],
-          duration: 900,
+          translateY: [14, 0],
+          filter: ['blur(8px)', 'blur(0px)'],
+          duration: 1100,
           ease: 'out(3)',
-          delay: stagger(55, { start: 250 }),
+          delay: stagger(70, { start: 320 }),
         },
         t,
       )
     }
-    marks.end = t + 250 + this.spans.length * 55 + 900
+    marks.end = t + 320 + this.spans.length * 70 + 1100
     this.marks = marks
     this.tl = tl
   }
