@@ -11,11 +11,11 @@ export class Hand3D {
 
   constructor() {
     this.mat = new THREE.MeshStandardMaterial({
-      color: '#fef4af',
+      color: '#0047ab',
       roughness: 0.55,
       metalness: 0.08,
-      emissive: '#001a40',
-      emissiveIntensity: 0.15,
+      emissive: '#002e73',
+      emissiveIntensity: 0.12,
     })
 
     const palm = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.55, 0.16), this.mat)

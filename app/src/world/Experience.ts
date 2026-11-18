@@ -65,6 +65,14 @@ export class Experience {
   private memoriesScrollMax = 0.64
   private memoriesHintShown = false
   private rubberBandTween: gsap.core.Tween | null = null
+  /** Session free-roam after finale (persisted for this tab) */
+  private journeyComplete = false
+  /** Brief busy window during chapter intros — queue at most one advance */
+  private chapterBusy = false
+  private chapterBusyTimer: ReturnType<typeof setTimeout> | null = null
+  private pendingScrollNudge: number | null = null
+  private letterScrollY = 0
+  private static readonly JOURNEY_KEY = 'hbd-journey-complete'
 
   constructor(app: HTMLElement) {
     this.app = app
@@ -84,9 +92,10 @@ export class Experience {
       // 'default' is more stable on Safari/WebKit than high-performance
       powerPreference: isWebKit ? 'default' : 'high-performance',
     })
-    this.renderer.setClearColor('#000f28')
+    this.renderer.setClearColor('#fffdf0')
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+    // No tone mapping — ACES was crushing cream grounds into mustard
+    this.renderer.toneMapping = THREE.NoToneMapping
     this.renderer.toneMappingExposure = 1.0
 
     this.adaptiveDpr = new AdaptiveDpr(maxPixelRatio(this.tier), this.tier === 'low' ? 0.7 : 0.85)
@@ -98,11 +107,11 @@ export class Experience {
     this.scene.add(this.atmosphere.background)
     this.scene.add(this.atmosphere.group)
 
-    const key = new THREE.DirectionalLight('#fef4af', 0.55)
+    const key = new THREE.DirectionalLight('#fffbe0', 0.7)
     key.position.set(3, 5, 4)
-    const rim = new THREE.DirectionalLight('#6a9ad4', 0.22)
+    const rim = new THREE.DirectionalLight('#0047ab', 0.18)
     rim.position.set(-4, 1, -2)
-    const amb = new THREE.AmbientLight('#001a40', 0.4)
+    const amb = new THREE.AmbientLight('#fef4af', 0.55)
     this.scene.add(key, rim, amb)
 
     this.gallery = new GalleryWorld()
@@ -125,6 +134,16 @@ export class Experience {
       this.ui.setMemoryHint(galleryCopy.scrollHint)
       this.ui.setHint(galleryCopy.scrollHint, '')
     })
+    try {
+      this.journeyComplete = sessionStorage.getItem(Experience.JOURNEY_KEY) === '1'
+    } catch {
+      this.journeyComplete = false
+    }
+    if (this.journeyComplete) {
+      this.memories.unlockForSessionRoam()
+      this.transitionFlags = { toLetter: true, toMemories: true, toFinale: true }
+      this.letterTextRevealed = true
+    }
     // Hand rides with the camera so the guide stays framed during ribbon travel
     this.hand3d.attachToCamera(this.camera)
 
@@ -263,13 +282,15 @@ export class Experience {
   }
 
   private scrollIntoJourney(): void {
+    // Use instant scroll — a lingering smooth scroll was fighting later chapter jumps
+    // (Ch3 captures landed back on the letter band mid-tween).
     const letter = document.getElementById('chapter-letter')
     if (!letter) {
-      window.scrollTo({ top: Math.round(window.innerHeight * 0.85), behavior: 'smooth' })
+      window.scrollTo({ top: Math.round(window.innerHeight * 0.85), behavior: 'auto' })
       return
     }
     const top = letter.getBoundingClientRect().top + window.scrollY + Math.round(window.innerHeight * 0.15)
-    window.scrollTo({ top, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    window.scrollTo({ top, behavior: 'auto' })
   }
 
   private relockGallery(): void {
@@ -390,6 +411,108 @@ export class Experience {
 
   getMemoriesApi(): MemoriesWorld {
     return this.memories
+  }
+
+  /** Test/debug snapshot for chapter handoff + free-roam verifies */
+  getJourneyState(): {
+    chapter: 'gallery' | 'letter' | 'memories' | 'finale'
+    unlocked: boolean
+    journeyComplete: boolean
+    chapterBusy: boolean
+    scrollProgress: number
+    memoriesUnlocked: boolean
+    letterTextRevealed: boolean
+    transitionFlags: { toLetter: boolean; toMemories: boolean; toFinale: boolean }
+  } {
+    return {
+      chapter: this.chapter,
+      unlocked: this.unlocked,
+      journeyComplete: this.journeyComplete,
+      chapterBusy: this.chapterBusy,
+      scrollProgress: this.scrollProgress,
+      memoriesUnlocked: this.memories.isScrollUnlocked(),
+      letterTextRevealed: this.letterTextRevealed,
+      transitionFlags: { ...this.transitionFlags },
+    }
+  }
+
+  private markJourneyComplete(): void {
+    if (this.journeyComplete) return
+    this.journeyComplete = true
+    try {
+      sessionStorage.setItem(Experience.JOURNEY_KEY, '1')
+    } catch {
+      /* private mode */
+    }
+  }
+
+  private beginChapterBusy(ms: number): void {
+    this.chapterBusy = true
+    if (this.chapterBusyTimer != null) clearTimeout(this.chapterBusyTimer)
+    this.chapterBusyTimer = setTimeout(() => {
+      this.chapterBusy = false
+      this.chapterBusyTimer = null
+      if (this.pendingScrollNudge != null) {
+        const delta = this.pendingScrollNudge
+        this.pendingScrollNudge = null
+        window.scrollBy({ top: delta, left: 0, behavior: 'auto' })
+      }
+    }, ms)
+  }
+
+  private queueOrApplyScrollNudge(delta: number): void {
+    if (this.chapterBusy) {
+      // Keep only the latest deliberate advance — never stack into a stuck lock
+      this.pendingScrollNudge = delta
+      return
+    }
+    window.scrollBy({ top: delta, left: 0, behavior: 'auto' })
+  }
+
+  private ensureLetterTextVisible(): void {
+    const nodes = Array.from(document.querySelectorAll<HTMLElement>('.letter-reveal'))
+    nodes.forEach((el) => el.classList.add('is-shown'))
+    this.letterTextRevealed = true
+  }
+
+  private restoreLetterStage(): void {
+    this.letter.retireForReading()
+    this.letter.group.visible = false
+    this.gallery.hideForLetter()
+    this.atmosphere.dust.visible = false
+    this.memories.group.visible = false
+    this.finale.group.visible = false
+    this.ensureLetterTextVisible()
+    const letter = document.querySelector('[data-letter-overlay]') as HTMLElement | null
+    if (letter && this.letterScrollY > 0) {
+      letter.scrollTop = this.letterScrollY
+    }
+  }
+
+  private restoreMemoriesStage(): void {
+    this.letter.retireForReading()
+    this.letter.group.visible = false
+    this.gallery.hideForLetter()
+    this.finale.group.visible = false
+    this.atmosphere.dust.visible = true
+    this.memories.restoreFromDissolve()
+  }
+
+  private restoreFinaleStage(): void {
+    this.gallery.group.visible = false
+    this.letter.group.visible = false
+    this.memories.group.visible = false
+    this.finale.showSettled()
+  }
+
+  private restoreGalleryStage(): void {
+    this.letter.group.visible = false
+    this.memories.group.visible = false
+    this.finale.group.visible = false
+    this.atmosphere.dust.visible = true
+    this.gallery.restoreForRoam()
+    const collage = this.gallery.getCollageCamera()
+    this.cameraBase = { x: collage.x, y: collage.y, z: collage.z, lookY: collage.lookY }
   }
 
   private bindGyro(): void {
@@ -644,18 +767,30 @@ export class Experience {
       trigger: '[data-scroll-space]',
       start: 'top top',
       end: 'bottom bottom',
-      scrub: prefersReducedMotion() ? false : 1.1,
+      scrub: prefersReducedMotion() ? false : 0.85,
       onUpdate: (self) => {
         if (!this.unlocked) return
         let p = self.progress
-        // Clamp past Ch3 until every portal has been watched end-to-end
-        if (!this.memories.isScrollUnlocked() && p > this.memoriesScrollMax) {
+        // Clamp past Ch3 until every portal has been watched (unless free-roam)
+        if (
+          !this.journeyComplete &&
+          !this.memories.isScrollUnlocked() &&
+          p > this.memoriesScrollMax
+        ) {
           p = this.memoriesScrollMax
         }
         this.scrollProgress = p
-        if (p < 0.33) {
-          const t = p / 0.33
-          // From near collage (z≈5.2) into the letter field (z≈-18)
+        if (p < 0.05) {
+          // Near top: restore Ch1 collage framing (free-roam + soft back-scroll)
+          const collage = this.gallery.getCollageCamera()
+          this.cameraBase.z = THREE.MathUtils.lerp(collage.z, 6.8, p / 0.05)
+          this.cameraBase.y = THREE.MathUtils.lerp(collage.y, 0.25, p / 0.05)
+          this.cameraBase.x = THREE.MathUtils.lerp(collage.x, 0.1, p / 0.05)
+          this.cameraBase.lookY = THREE.MathUtils.lerp(collage.lookY, 0.05, p / 0.05)
+          this.setChapter('gallery')
+        } else if (p < 0.33) {
+          const t = (p - 0.05) / 0.28
+          // From near collage into the letter field (z≈-18)
           this.cameraBase.z = THREE.MathUtils.lerp(6.8, -18, t)
           this.cameraBase.y = THREE.MathUtils.lerp(0.25, 0.2, t)
           this.cameraBase.x = THREE.MathUtils.lerp(0.1, Math.sin(t * Math.PI) * 0.45, t)
@@ -664,7 +799,6 @@ export class Experience {
         } else if (p < 0.66) {
           const t = (p - 0.33) / 0.33
           // Hold a comfortable stand-off through Ch3 — portals sync to camera depth.
-          // (Previously camera dove to z≈-38 against portals at -40 → near-fullscreen stack.)
           const holdZ = -26
           this.cameraBase.z = THREE.MathUtils.lerp(-18, holdZ, Math.min(1, t / 0.35))
           this.cameraBase.y = THREE.MathUtils.lerp(0.2, 0.08, t)
@@ -718,9 +852,12 @@ export class Experience {
       }
     }
 
+    const gated = () =>
+      !this.journeyComplete && !this.memories.isScrollUnlocked()
+
     const onWheel = (e: WheelEvent) => {
       if (!this.unlocked || this.chapter !== 'memories') return
-      if (this.memories.isScrollUnlocked()) return
+      if (!gated()) return
       if (e.deltaY <= 0) return
       const limit = maxScrollForProgress(this.memoriesScrollMax)
       if (window.scrollY + e.deltaY > limit - 4) {
@@ -736,7 +873,7 @@ export class Experience {
     }
     const onTouchMove = (e: TouchEvent) => {
       if (!this.unlocked || this.chapter !== 'memories') return
-      if (this.memories.isScrollUnlocked()) return
+      if (!gated()) return
       if (e.touches.length !== 1) return
       const y = e.touches[0].clientY
       const dy = touchY - y // finger up → positive
@@ -769,45 +906,70 @@ export class Experience {
     const letter = document.querySelector('[data-letter-overlay]') as HTMLElement | null
     if (!letter) return
 
-    const edgeEps = 3
-    const atBottom = () => letter.scrollTop + letter.clientHeight >= letter.scrollHeight - edgeEps
+    const edgeEps = 4
+    const atBottom = () =>
+      letter.scrollHeight <= letter.clientHeight + edgeEps ||
+      letter.scrollTop + letter.clientHeight >= letter.scrollHeight - edgeEps
     const atTop = () => letter.scrollTop <= edgeEps
 
     const onWheel = (e: WheelEvent) => {
       if (!this.unlocked || this.chapter !== 'letter') return
+      this.letterScrollY = letter.scrollTop
       if (e.deltaY > 0 && atBottom()) {
-        window.scrollBy({ top: e.deltaY, left: 0, behavior: 'auto' })
+        e.preventDefault()
+        // One deliberate wheel past the letter must clear scrub lag into Ch3
+        const boost = Math.max(Math.abs(e.deltaY) * 2.4, window.innerHeight * 0.28)
+        this.queueOrApplyScrollNudge(boost)
       } else if (e.deltaY < 0 && atTop()) {
-        window.scrollBy({ top: e.deltaY, left: 0, behavior: 'auto' })
+        e.preventDefault()
+        const boost = -Math.max(Math.abs(e.deltaY) * 2.4, window.innerHeight * 0.22)
+        this.queueOrApplyScrollNudge(boost)
       }
     }
 
     let touchY = 0
     let touching = false
+    let swipeAccum = 0
     const onTouchStart = (e: TouchEvent) => {
       if (!this.unlocked || this.chapter !== 'letter' || e.touches.length !== 1) return
       touching = true
       touchY = e.touches[0].clientY
+      swipeAccum = 0
     }
     const onTouchMove = (e: TouchEvent) => {
       if (!touching || !this.unlocked || this.chapter !== 'letter') return
       const y = e.touches[0]?.clientY ?? touchY
       const dy = touchY - y
       touchY = y
+      this.letterScrollY = letter.scrollTop
       // Finger up (dy>0) at bottom → advance page; finger down at top → go back
       if (dy > 0 && atBottom()) {
-        window.scrollBy({ top: dy, left: 0, behavior: 'auto' })
+        e.preventDefault()
+        swipeAccum += dy
+        const boost = Math.max(dy * 2.8, 36)
+        this.queueOrApplyScrollNudge(boost)
       } else if (dy < 0 && atTop()) {
-        window.scrollBy({ top: dy, left: 0, behavior: 'auto' })
+        e.preventDefault()
+        swipeAccum += dy
+        const boost = -Math.max(Math.abs(dy) * 2.8, 36)
+        this.queueOrApplyScrollNudge(boost)
+      } else {
+        swipeAccum = 0
       }
     }
     const onTouchEnd = () => {
+      // If a deliberate swipe accumulated but scrub lagged, give one final nudge
+      if (Math.abs(swipeAccum) > 48 && this.chapter === 'letter') {
+        const dir = Math.sign(swipeAccum)
+        this.queueOrApplyScrollNudge(dir * window.innerHeight * 0.2)
+      }
       touching = false
+      swipeAccum = 0
     }
 
-    letter.addEventListener('wheel', onWheel, { passive: true })
+    letter.addEventListener('wheel', onWheel, { passive: false })
     letter.addEventListener('touchstart', onTouchStart, { passive: true })
-    letter.addEventListener('touchmove', onTouchMove, { passive: true })
+    letter.addEventListener('touchmove', onTouchMove, { passive: false })
     letter.addEventListener('touchend', onTouchEnd, { passive: true })
     this.extraCleanup.push(
       () => letter.removeEventListener('wheel', onWheel),
@@ -833,91 +995,108 @@ export class Experience {
     }
 
     // Soft bloom/exposure crossfade — no hard pop between chapters
-    // Keep letter bloom low so soft edges don't read as grey portal rings
-    // Memories bloom off — bloom was washing cream halos to grey/blue
-    const bloomTarget =
-      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.45 : 0
-    // Letter exposure slightly lifted so navy reads blue, not near-black
-    const exposureTarget = chapter === 'finale' ? 0.88 : chapter === 'letter' ? 1.08 : 1.0
-    // Keep cream #FEF4AF readable — ACES was greying the invitation glow
-    this.renderer.toneMapping =
-      chapter === 'memories' ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping
+    // Memories bloom off — bloom was washing cobalt halos
+    // Bloom off on cream — it was yellowing edges into mustard
+    const bloomTarget = 0
+    const exposureTarget = 1.0
+    // Stay on NoToneMapping so cream grounds never crush toward mustard
+    this.renderer.toneMapping = THREE.NoToneMapping
+    this.renderer.toneMappingExposure = 1.0
     if (prefersReducedMotion()) {
       this.post.setBloomMul(bloomTarget)
-      this.renderer.toneMappingExposure = exposureTarget
     } else {
-      const bloomProxy = { v: chapter === 'gallery' ? 0.75 : prev === 'finale' ? 0 : 0.9 }
-      // Read current via stepped lerp from last target approximation
+      const bloomProxy = { v: chapter === 'gallery' ? 0.35 : prev === 'finale' ? 0 : 0.25 }
       gsap.to(bloomProxy, {
         v: bloomTarget,
         duration: 1.35,
         ease: 'power2.inOut',
         onUpdate: () => this.post.setBloomMul(bloomProxy.v),
       })
-      gsap.to(this.renderer, {
-        toneMappingExposure: exposureTarget,
-        duration: 1.35,
-        ease: 'power2.inOut',
-      })
+    }
+    void exposureTarget
+
+    if (chapter === 'gallery') {
+      if (this.transitionFlags.toLetter || this.journeyComplete) {
+        this.restoreGalleryStage()
+      }
+      return
     }
 
-    if (chapter === 'letter' && !this.transitionFlags.toLetter) {
-      this.transitionFlags.toLetter = true
-      // Memories stay fully off until Ch3 — never peek through the letter
-      this.memories.group.visible = false
-      this.atmosphere.dust.visible = false
-      const targets = this.letter.getDiscWorldTargets()
-      // Ch1→Ch2: gallery planes morph away; letter discs stay off-camera for reading
-      // (faces only return as Ch3 portals after the letter has left)
-      this.letter.retireForReading()
-      this.letter.group.visible = false
-      if (!prefersReducedMotion()) {
-        this.gallery.morphIntoLetter(targets)
-        window.setTimeout(() => this.gallery.hideForLetter(), 1100)
+    if (chapter === 'letter') {
+      if (!this.transitionFlags.toLetter) {
+        this.transitionFlags.toLetter = true
+        this.beginChapterBusy(prefersReducedMotion() ? 0 : 700)
+        this.memories.group.visible = false
+        this.finale.group.visible = false
+        this.atmosphere.dust.visible = false
+        const targets = this.letter.getDiscWorldTargets()
+        // Ch1→Ch2: gallery planes morph away; letter discs stay off-camera for reading
+        this.letter.retireForReading()
+        this.letter.group.visible = false
+        // Reveal copy immediately as the transition lands — no 420ms dead pause
+        this.revealLetterText()
+        if (!prefersReducedMotion()) {
+          this.gallery.morphIntoLetter(targets)
+          window.setTimeout(() => this.gallery.hideForLetter(), 1100)
+        } else {
+          this.gallery.hideForLetter()
+        }
+        // Hard guarantee: no discs / thread / dust over readable letter copy
+        window.setTimeout(() => {
+          this.letter.retireForReading()
+          this.letter.group.visible = false
+          this.gallery.hideForLetter()
+          this.atmosphere.dust.visible = false
+        }, prefersReducedMotion() ? 0 : 900)
       } else {
-        this.gallery.hideForLetter()
+        // Free-roam / revisit — restore readable letter without replaying morph
+        this.restoreLetterStage()
       }
-      window.setTimeout(
-        () => this.revealLetterText(),
-        prefersReducedMotion() ? 0 : 420,
-      )
-      // Hard guarantee: no discs / thread / dust over readable letter copy
-      window.setTimeout(() => {
+      return
+    }
+
+    if (chapter === 'memories') {
+      if (!this.transitionFlags.toMemories) {
+        this.transitionFlags.toMemories = true
+        this.beginChapterBusy(prefersReducedMotion() ? 0 : 900)
         this.letter.retireForReading()
         this.letter.group.visible = false
         this.gallery.hideForLetter()
-        this.atmosphere.dust.visible = false
-      }, prefersReducedMotion() ? 0 : 900)
+        this.finale.group.visible = false
+        this.atmosphere.dust.visible = true
+        this.memories.group.visible = true
+        // Ch2→Ch3: portals alone emerge into separated layout (no giant letter rims)
+        window.setTimeout(
+          () => this.memories.playEntrance(),
+          prefersReducedMotion() ? 0 : 80,
+        )
+      } else {
+        this.restoreMemoriesStage()
+      }
+      return
     }
 
-    if (chapter === 'memories' && !this.transitionFlags.toMemories) {
-      this.transitionFlags.toMemories = true
-      this.letter.retireForReading()
-      this.letter.group.visible = false
-      this.gallery.hideForLetter()
-      this.memories.group.visible = true
-      // Ch2→Ch3: portals alone emerge into separated layout (no giant letter rims)
-      window.setTimeout(
-        () => this.memories.playEntrance(),
-        prefersReducedMotion() ? 0 : 80,
-      )
-    }
-
-    if (chapter === 'finale' && !this.transitionFlags.toFinale) {
-      this.transitionFlags.toFinale = true
-      this.finale.group.visible = true
-      const worldPos = this.memories.getWorldPositions()
-      const colors = this.memories.samplePortalColors(128)
-      // Ch3→Ch4: portals draw inward as rose particles gather — overlap, no blank navy
-      this.finale.playFromPortals(worldPos, colors)
-      this.memories.dissolve()
-      this.letter.dissolveForFinale()
-      // Keep portals/particles on stage through the gather so mid-frames aren't empty
-      window.setTimeout(() => {
-        this.letter.group.visible = false
-        this.memories.group.visible = false
-        this.gallery.group.visible = false
-      }, 3200)
+    if (chapter === 'finale') {
+      if (!this.transitionFlags.toFinale) {
+        this.transitionFlags.toFinale = true
+        this.beginChapterBusy(prefersReducedMotion() ? 0 : 1600)
+        this.finale.group.visible = true
+        const worldPos = this.memories.getWorldPositions()
+        const colors = this.memories.samplePortalColors(128)
+        // Ch3→Ch4: portals draw inward as cobalt particles gather — overlap, no blank flash
+        this.finale.playFromPortals(worldPos, colors)
+        this.memories.dissolve()
+        this.letter.dissolveForFinale()
+        // Completing the journey unlocks free-roam for the session
+        this.markJourneyComplete()
+        window.setTimeout(() => {
+          this.letter.group.visible = false
+          this.memories.group.visible = false
+          this.gallery.group.visible = false
+        }, 3200)
+      } else {
+        this.restoreFinaleStage()
+      }
     }
   }
 
@@ -926,10 +1105,9 @@ export class Experience {
     this.letterTextRevealed = true
     const nodes = Array.from(document.querySelectorAll<HTMLElement>('.letter-reveal'))
     nodes.forEach((el, i) => {
-      window.setTimeout(
-        () => el.classList.add('is-shown'),
-        prefersReducedMotion() ? 0 : 180 + i * 220,
-      )
+      // First block immediate; short stagger so copy appears as the land completes
+      const delay = prefersReducedMotion() ? 0 : i === 0 ? 0 : 35 + i * 55
+      window.setTimeout(() => el.classList.add('is-shown'), delay)
     })
   }
 

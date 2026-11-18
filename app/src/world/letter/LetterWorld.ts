@@ -36,6 +36,8 @@ export class LetterWorld {
           uBoost: { value: 0.05 },
           uOpacity: { value: 0 },
           uRim: { value: 0 },
+          uGlow: { value: 0 },
+          uWash: { value: 0 },
         },
         vertexShader: photoRevealVertex,
         fragmentShader: circleMaskFragment,
@@ -51,7 +53,7 @@ export class LetterWorld {
       const rim = new THREE.Mesh(
         new THREE.RingGeometry(place.s * 0.98, place.s * 1.06, 64),
         new THREE.MeshBasicMaterial({
-          color: '#fef4af',
+          color: '#0047ab',
           transparent: true,
           opacity: 0,
           side: THREE.DoubleSide,
