@@ -68,14 +68,13 @@ varying vec2 vUv;
 void main() {
   vec2 uv = vUv;
   float t = uTime * 0.035;
-  // Center #001A40-ish → edge #000F28 — readable navy, never pure black
+  // Cream vignette: warmer edge (#F7E98C) → base (#FEF4AF) → soft highlight (#FFFBE0)
   float radial = 1.0 - smoothstep(0.05, 0.92, length(uv - 0.5));
   vec3 col = mix(uColorA, uColorB, radial);
-  // Soft cobalt bloom in the mid field
-  float cobalt = 0.18 + 0.1 * sin(t * 0.55 + uv.y * 1.1 + uScroll * 0.3);
-  col = mix(col, uColorC, cobalt * radial);
+  float lift = 0.12 + 0.08 * sin(t * 0.55 + uv.y * 1.1 + uScroll * 0.3);
+  col = mix(col, uColorC, lift * radial);
   float vig = smoothstep(1.18, 0.34, length(uv - 0.5));
-  // Vignette toward deep navy (uColorA), never multiply toward absolute black
+  // Vignette toward warmer cream depth — never navy/black
   col = mix(uColorA, col, vig);
   gl_FragColor = vec4(col, 1.0);
 }
@@ -128,9 +127,9 @@ void main() {
   float dist = distance(vUv, vec2(0.5));
   float vig = smoothstep(0.95, 0.32, dist);
   float grain = fract(sin(dot(vUv * (uTime + 20.0), vec2(12.9898, 78.233))) * 43758.5453);
-  // Soften toward navy (#000f28), never multiply into plum/black
-  vec3 navy = vec3(0.0, 0.059, 0.157);
-  color.rgb = mix(mix(color.rgb, navy, uIntensity * 0.85), color.rgb, vig);
+  // Soften toward warmer cream depth (#F7E98C), never navy/black
+  vec3 creamDepth = vec3(0.969, 0.914, 0.549);
+  color.rgb = mix(mix(color.rgb, creamDepth, uIntensity * 0.55), color.rgb, vig);
   color.rgb += (grain - 0.5) * uGrain;
   gl_FragColor = color;
 }
@@ -168,20 +167,21 @@ varying vec2 vUv;
 void main() {
   vec2 uv = vUv * 2.0 - 1.0;
   float r = length(uv);
-  // Tight AA disc — keep edge crisp so no navy gap between photo and cream halo
+  // Tight AA disc — keep edge crisp so no navy gap between photo and cobalt halo
   float soft = max(uSoft * 0.55, 0.02);
   float edge0 = 1.0 - soft;
   float mask = 1.0 - smoothstep(edge0, 1.0, r);
   if (mask < 0.01) discard;
   vec4 tex = texture2D(uMap, vUv);
   vec3 col = tex.rgb * (1.0 + uBoost);
-  // Thin crisp cream SDF rim — bridges into the outer halo (no dark gap ring)
-  vec3 cream = vec3(0.996, 0.957, 0.686); // #FEF4AF
+  // Cobalt SDF rim — #0047AB with soft #3D7BE0 lift so it reads on cream
+  vec3 cobaltGlow = vec3(0.239, 0.482, 0.878); // #3D7BE0
+  vec3 cobalt = vec3(0.0, 0.278, 0.671); // #0047AB
   float rimBand = smoothstep(0.93, 0.96, r) * (1.0 - smoothstep(0.975, 0.995, r));
-  float rimStr = uRim * (0.85 + uGlow * 0.55);
-  col = mix(col, cream, rimBand * rimStr);
-  // When inviting, seal the seam with a touch more cream at the edge
-  col = mix(col, cream, smoothstep(0.9, 0.99, r) * uGlow * 0.35);
+  float rimStr = uRim * (0.9 + uGlow * 0.55);
+  col = mix(col, mix(cobalt, cobaltGlow, 0.45), rimBand * rimStr);
+  // When inviting, seal the seam with cobalt at the edge
+  col = mix(col, cobalt, smoothstep(0.9, 0.99, r) * uGlow * 0.45);
   gl_FragColor = vec4(col, mask * uOpacity);
 }
 `

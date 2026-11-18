@@ -8,13 +8,12 @@ import {
 import type { QualityTier } from '../utils/quality'
 import { particleBudget } from '../utils/quality'
 
-/** Cobalt navy grounds + cream dust — shared across chapter crossfades */
+/** Butter cream grounds + cobalt dust — shared across chapter crossfades (no navy flashes) */
 const PALETTES = {
-  gallery: ['#000f28', '#001a40', '#0047ab'],
-  // Letter: brighter navy center → deep edge + cobalt glow (readable blue, not black)
-  letter: ['#000f28', '#002a66', '#0047ab'],
-  memories: ['#000f28', '#002a66', '#0047ab'],
-  finale: ['#000f28', '#001a40', '#002a66'],
+  gallery: ['#f7e98c', '#fef4af', '#fffbe0'],
+  letter: ['#f7e98c', '#fef4af', '#fffbe0'],
+  memories: ['#f7e98c', '#fef4af', '#fffbe0'],
+  finale: ['#f7e98c', '#fef4af', '#fffbe0'],
 } as const
 
 export class Atmosphere {
@@ -61,11 +60,12 @@ export class Atmosphere {
       seeds[i] = Math.random()
     }
     const colors = new Float32Array(budget * 3)
-    // Butter cream dust motes
+    // Soft cobalt dust motes on cream (#0047AB → #3D7BE0)
     for (let i = 0; i < budget; i++) {
-      colors[i * 3] = 0.996
-      colors[i * 3 + 1] = 0.957
-      colors[i * 3 + 2] = 0.686
+      const t = Math.random()
+      colors[i * 3] = 0.0 + t * 0.239
+      colors[i * 3 + 1] = 0.278 + t * 0.204
+      colors[i * 3 + 2] = 0.671 + t * 0.207
     }
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -76,14 +76,15 @@ export class Atmosphere {
     this.dustMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      // Normal blend keeps cobalt dust blue on cream (additive washed to white)
+      blending: THREE.NormalBlending,
       vertexShader: softParticleVertex,
       fragmentShader: softParticleFragment,
       uniforms: {
         uTime: { value: 0 },
         uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.75) },
         uSize: { value: tier === 'low' ? 28 : 42 },
-        uColor: { value: new THREE.Color('#fef4af') },
+        uColor: { value: new THREE.Color('#0047ab') },
         uColorMix: { value: 1 },
       },
     })
@@ -96,8 +97,8 @@ export class Atmosphere {
     this.targetA.set(a)
     this.targetB.set(b)
     this.targetC.set(c)
-    // Snap letter/finale grounds so mid-frames never linger on plum leftovers
-    if (chapter === 'letter' || chapter === 'memories') {
+    // Snap chapter grounds so mid-frames never flash dark leftovers
+    if (chapter === 'letter' || chapter === 'memories' || chapter === 'finale') {
       this.colorA.copy(this.targetA)
       this.colorB.copy(this.targetB)
       this.colorC.copy(this.targetC)

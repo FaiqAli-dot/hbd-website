@@ -142,7 +142,7 @@ export class GalleryWorld {
   private readonly scrubOmega = 38
 
   constructor() {
-    const BG = new THREE.Color('#000f28')
+    const BG = new THREE.Color('#fef4af')
     this.group.position.set(0, 0, 0)
 
     const maxTex = textureMaxSize(detectQuality())
@@ -165,7 +165,7 @@ export class GalleryWorld {
       mesh.position.z = 0.03
       const back = new THREE.Mesh(
         new THREE.BoxGeometry(p.size[0], p.size[1], 0.024),
-        new THREE.MeshBasicMaterial({ color: '#001a40' }),
+        new THREE.MeshBasicMaterial({ color: '#f7e98c' }),
       )
       g.add(back, mesh)
       g.position.fromArray(p.pos)
@@ -311,10 +311,10 @@ export class GalleryWorld {
     this.threadMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       uniforms: { uLit: { value: 0 }, uTime: { value: 0 } },
       vertexShader: `varying vec2 vUv; varying float vD; void main(){vUv=uv; vec4 mv=modelViewMatrix*vec4(position,1.); vD=-mv.z; gl_Position=projectionMatrix*mv;}`,
-      fragmentShader: `varying vec2 vUv; varying float vD; uniform float uLit; uniform float uTime; void main(){ if(uLit<0.001){ discard; } float lit=smoothstep(uLit+0.004,uLit-0.004,vUv.x); float spark=smoothstep(0.012,0.,abs(vUv.x-uLit))*1.4; float a=mix(.10,.55,lit)+spark; a*=exp(-pow(.03*vD,2.))*smoothstep(4.6,8.5,vD); gl_FragColor=vec4(vec3(.996,.957,.686)*a,1.);}`,
+      fragmentShader: `varying vec2 vUv; varying float vD; uniform float uLit; uniform float uTime; void main(){ if(uLit<0.001){ discard; } float lit=smoothstep(uLit+0.004,uLit-0.004,vUv.x); float spark=smoothstep(0.012,0.,abs(vUv.x-uLit))*1.4; float a=mix(.18,.7,lit)+spark; a*=exp(-pow(.03*vD,2.))*smoothstep(4.6,8.5,vD); if(a<0.01) discard; gl_FragColor=vec4(vec3(0.,.278,.671),a);}`,
     })
     this.group.add(new THREE.Mesh(new THREE.TubeGeometry(curve, 800, 0.0055, 6, false), this.threadMat))
     this.threadU = this.photos.map((_, i) => {
@@ -324,7 +324,7 @@ export class GalleryWorld {
   }
 
   private buildAtmosphere(BG: THREE.Color): void {
-    // Soft cobalt wash at the far end — never a bright white hotspot
+    // Soft warmer cream depth wash at the far end — no navy flash
     {
       const m = new THREE.ShaderMaterial({
         depthWrite: false,
@@ -332,7 +332,7 @@ export class GalleryWorld {
         blending: THREE.NormalBlending,
         fog: false,
         vertexShader: `varying vec2 vUv; void main(){vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}`,
-        fragmentShader: `varying vec2 vUv; void main(){ vec2 d=(vUv-vec2(.5,.47))*vec2(1.7,1.); float r=length(d); float a=exp(-r*r*3.5)*.55; vec3 c=vec3(.02,.08,.22); gl_FragColor=vec4(c,a);}`,
+        fragmentShader: `varying vec2 vUv; void main(){ vec2 d=(vUv-vec2(.5,.47))*vec2(1.7,1.); float r=length(d); float a=exp(-r*r*3.5)*.35; vec3 c=vec3(.969,.914,.549); gl_FragColor=vec4(c,a);}`,
       })
       const pl = new THREE.Mesh(new THREE.PlaneGeometry(160, 90), m)
       pl.position.set(-1, 0, -70)
@@ -341,8 +341,8 @@ export class GalleryWorld {
 
     const budget = detectQuality() === 'low' ? 900 : detectQuality() === 'medium' ? 1600 : 2600
     this.dustMats.push(
-      this.makeDust(budget, [16, 10, -44, 16], 5, 0.55, '#fef4af', '#a8c4e8', 7),
-      this.makeDust(Math.floor(budget * 0.03), [34, 18, -70, -30], 120, 0.1, '#6a9ad4', '#e8d98a', 11),
+      this.makeDust(budget, [16, 10, -44, 16], 5, 0.55, '#0047ab', '#3d7be0', 7),
+      this.makeDust(Math.floor(budget * 0.03), [34, 18, -70, -30], 120, 0.1, '#002e73', '#6a9ad4', 11),
     )
     void BG
   }
@@ -386,7 +386,8 @@ export class GalleryWorld {
     const mat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      // Normal blend keeps cobalt motes blue on cream grounds
+      blending: THREE.NormalBlending,
       uniforms: {
         uTime: { value: 0 },
         uAlpha: { value: alpha },
@@ -395,7 +396,7 @@ export class GalleryWorld {
       vertexShader: `attribute float size; attribute float phase; attribute vec3 color; varying vec3 vC; varying float vA; uniform float uTime; uniform float uPx;
         void main(){ vec3 p=position; p.x+=sin(uTime*.13+phase)*.35; p.y+=sin(uTime*.09+phase*1.7)*.28+uTime*.02; vec4 mv=modelViewMatrix*vec4(p,1.);
         gl_PointSize=size*uPx/(-mv.z)*.02; vC=color; vA=(.55+.45*sin(uTime*.7+phase*3.))*smoothstep(0.5,3.,-mv.z)*exp(-pow(.028*-mv.z,2.)); gl_Position=projectionMatrix*mv;}`,
-      fragmentShader: `varying vec3 vC; varying float vA; uniform float uAlpha; void main(){ float d=length(gl_PointCoord-.5); float a=smoothstep(.5,.0,d); gl_FragColor=vec4(vC*a*a*uAlpha*vA,1.);}`,
+      fragmentShader: `varying vec3 vC; varying float vA; uniform float uAlpha; void main(){ float d=length(gl_PointCoord-.5); float a=smoothstep(.5,.0,d)*uAlpha*vA; if(a<0.01) discard; gl_FragColor=vec4(vC,a);}`,
     })
     this.group.add(new THREE.Points(geo, mat))
     return mat
@@ -999,6 +1000,22 @@ export class GalleryWorld {
     if (this.threadMat) this.threadMat.uniforms.uLit.value = 0
     // Entire gallery group off — no thread streak, haze plane, or dust over letter copy
     this.group.visible = false
+  }
+
+  /** Free-roam: restore settled collage after letter morph hid the prints */
+  restoreForRoam(): void {
+    this.photos.forEach((p) => {
+      gsap.killTweensOf(p.group.position)
+      gsap.killTweensOf(p.group.scale)
+      gsap.killTweensOf(p.material.uniforms.uReveal)
+      p.group.visible = true
+    })
+    if (this.threadMat) {
+      gsap.killTweensOf(this.threadMat.uniforms.uLit)
+      this.threadMat.uniforms.uLit.value = 0.12
+    }
+    this.group.visible = true
+    this.finalizeCollage()
   }
 
   shakeHint(root: THREE.Object3D): void {

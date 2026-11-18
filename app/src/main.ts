@@ -32,11 +32,13 @@ async function mountApp(): Promise<void> {
       getDragState: () => unknown
       forceCleanLetterStage: () => void
       projectMemoriesBounds: () => Array<{ x: number; y: number; w: number; h: number; index: number }>
+      getJourneyState: () => unknown
     }
   }).__hbd = {
     getDragState: () => experience.getDragState(),
     forceCleanLetterStage: () => experience.forceCleanLetterStage(),
     projectMemoriesBounds: () => experience.projectMemoriesBounds(),
+    getJourneyState: () => experience.getJourneyState(),
   }
 
   window.addEventListener(

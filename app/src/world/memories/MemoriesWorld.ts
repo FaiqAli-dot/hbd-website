@@ -79,7 +79,7 @@ export class MemoriesWorld {
   private readonly tmpNdc = new THREE.Vector3()
   private readonly lookDir = new THREE.Vector3()
   private readonly camUp = new THREE.Vector3()
-  /** Ease-in-out pulse period for active cream glow (seconds) */
+  /** Ease-in-out pulse period for active cobalt glow (seconds) */
   private readonly glowPeriod = 2.4
 
   constructor() {
@@ -133,16 +133,16 @@ export class MemoriesWorld {
       portalGroup.scale.setScalar(0.01)
       portalGroup.add(mesh)
 
-      // Soft feathered cream #FEF4AF halo (additive + NoToneMapping in memories)
+      // Soft luminous cobalt halo — Normal blend so it stays blue on cream (not washed white)
       const halo = new THREE.Mesh(
         new THREE.CircleGeometry(1.28, 128),
         new THREE.MeshBasicMaterial({
           map: MemoriesWorld.sharedGlowTexture(),
-          color: '#ffffff',
+          color: '#3d7be0',
           transparent: true,
           opacity: 0,
           depthWrite: false,
-          blending: THREE.AdditiveBlending,
+          blending: THREE.NormalBlending,
           toneMapped: false,
         }),
       )
@@ -179,7 +179,7 @@ export class MemoriesWorld {
 
   private static glowTex: THREE.CanvasTexture | null = null
 
-  /** Soft #FEF4AF radial — thin peak at photo rim, long feathered falloff (no hard band) */
+  /** Soft luminous cobalt radial — reads clearly on cream grounds */
   private static sharedGlowTexture(): THREE.CanvasTexture {
     if (MemoriesWorld.glowTex) return MemoriesWorld.glowTex
     const size = 512
@@ -191,14 +191,14 @@ export class MemoriesWorld {
     // Halo mesh radius 1.28 → photo rim at c/1.28
     const photoR = c / 1.28
     const g = ctx.createRadialGradient(c, c, photoR * 0.78, c, c, c * 0.995)
-    // #FEF4AF — soft ring: rise under the rim, peak, then long feather (not a flat band)
-    g.addColorStop(0.0, 'rgba(254,244,175,0)')
-    g.addColorStop(0.1, 'rgba(254,244,175,0.15)')
-    g.addColorStop(0.18, 'rgba(254,244,175,0.7)')
-    g.addColorStop(0.3, 'rgba(254,244,175,0.4)')
-    g.addColorStop(0.5, 'rgba(254,244,175,0.16)')
-    g.addColorStop(0.75, 'rgba(254,244,175,0.04)')
-    g.addColorStop(1.0, 'rgba(254,244,175,0)')
+    // #0047AB ring with soft #3D7BE0 bloom — additive on cream
+    g.addColorStop(0.0, 'rgba(0,71,171,0)')
+    g.addColorStop(0.08, 'rgba(61,123,224,0.18)')
+    g.addColorStop(0.16, 'rgba(0,71,171,0.88)')
+    g.addColorStop(0.28, 'rgba(0,71,171,0.55)')
+    g.addColorStop(0.48, 'rgba(61,123,224,0.22)')
+    g.addColorStop(0.72, 'rgba(0,71,171,0.06)')
+    g.addColorStop(1.0, 'rgba(0,71,171,0)')
     ctx.clearRect(0, 0, size, size)
     ctx.fillStyle = g
     ctx.fillRect(0, 0, size, size)
@@ -244,6 +244,15 @@ export class MemoriesWorld {
 
   allWatched(): boolean {
     return this.portals.every((p) => p.watched)
+  }
+
+  /** Session free-roam: keep Ch3 unlocked across reloads after finale */
+  unlockForSessionRoam(): void {
+    this.portals.forEach((p) => {
+      p.watched = true
+      p.phase = 'rest'
+    })
+    this.unlockScroll()
   }
 
   isScrollUnlocked(): boolean {
@@ -367,7 +376,7 @@ export class MemoriesWorld {
     if (!p.frameCtx || !p.frameCanvas) return
     const w = p.frameCanvas.width
     const h = p.frameCanvas.height
-    p.frameCtx.fillStyle = '#001a40'
+    p.frameCtx.fillStyle = '#fef4af'
     p.frameCtx.fillRect(0, 0, w, h)
     const iw =
       'videoWidth' in img && (img as HTMLVideoElement).videoWidth
@@ -410,7 +419,7 @@ export class MemoriesWorld {
     p.frameCanvas = canvas
     p.frameCtx = ctx
     if (ctx) {
-      ctx.fillStyle = '#001a40'
+      ctx.fillStyle = '#fef4af'
       ctx.fillRect(0, 0, 512, 512)
     }
     const ct = new THREE.CanvasTexture(canvas)
@@ -563,6 +572,40 @@ export class MemoriesWorld {
         delay: i * 0.08 + 0.05,
       })
     })
+  }
+
+  /** Undo dissolve / restore the 2×2 grid for free-roam re-entry (keeps watched state). */
+  restoreFromDissolve(): void {
+    gsap.killTweensOf(this.group)
+    this.group.visible = true
+    this.entered = true
+    this.portals.forEach((p) => {
+      gsap.killTweensOf(p.group)
+      gsap.killTweensOf(p.group.position)
+      gsap.killTweensOf(p.group.scale)
+      gsap.killTweensOf(p.material.uniforms.uOpacity)
+      gsap.killTweensOf(p.material.uniforms.uRim)
+      gsap.killTweensOf(p.material.uniforms.uGlow)
+      gsap.killTweensOf(p.material.uniforms.uBoost)
+      gsap.killTweensOf(p.halo.material)
+      this.pauseVideo(p)
+      this.bindVideoTexture(p)
+      p.phase = 'rest'
+      p.group.visible = true
+      p.group.position.set(p.rest.x, p.rest.y, p.rest.z)
+      p.group.scale.setScalar(p.rest.s)
+      p.material.uniforms.uOpacity.value = 1
+      p.material.uniforms.uRim.value = p.watched ? 1.3 : 1
+      p.material.uniforms.uGlow.value = 0
+      p.material.uniforms.uBoost.value = p.watched ? 0.06 : 0
+      const haloMat = p.halo.material as THREE.MeshBasicMaterial
+      haloMat.opacity = 0
+      p.halo.scale.setScalar(1)
+    })
+    // Free-roam: never re-lock after the journey has unlocked once
+    if (this.scrollUnlocked) {
+      this.activeIndex = -1
+    }
   }
 
   dissolve(): gsap.core.Timeline {
@@ -860,7 +903,7 @@ export class MemoriesWorld {
       gsap.to(p.material.uniforms.uGlow, { value: 0, duration: 0.3 })
       gsap.to(p.halo.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.3 })
       p.halo.scale.setScalar(1)
-      // Watched: slightly brighter cream rim
+      // Watched: slightly brighter cobalt rim
       gsap.to(p.material.uniforms.uRim, { value: 1.3, duration: 0.35 })
     })
     this.onAllWatchedCb?.()
@@ -951,15 +994,15 @@ export class MemoriesWorld {
       p.group.position.y = p.rest.y + bob
 
       const haloMat = p.halo.material as THREE.MeshBasicMaterial
-      // Active glow pulse — soft cream #FEF4AF, ~2.4s ease-in-out
+      // Active glow pulse — luminous cobalt, ~2.4s ease-in-out
       const isActive = i === this.activeIndex && !p.watched && !this.scrollUnlocked
       if (isActive) {
         const cycle = (time % this.glowPeriod) / this.glowPeriod
         // ease-in-out (smoothstep-like)
         const e = cycle < 0.5 ? 2 * cycle * cycle : 1 - Math.pow(-2 * cycle + 2, 2) / 2
-        const opacity = 0.45 + 0.45 * e // 0.45 → 0.9
-        const haloScale = 1.0 + 0.04 * e // 1.0 → 1.04 (halo only — keeps grid centred)
-        p.material.uniforms.uGlow.value = 0.35 + 0.4 * e
+        const opacity = 0.55 + 0.4 * e // 0.55 → 0.95 — readable cobalt on cream
+        const haloScale = 1.0 + 0.05 * e // 1.0 → 1.05 (halo only — keeps grid centred)
+        p.material.uniforms.uGlow.value = 0.45 + 0.5 * e
         haloMat.opacity = opacity
         p.halo.scale.setScalar(haloScale)
         p.material.uniforms.uOpacity.value = 1

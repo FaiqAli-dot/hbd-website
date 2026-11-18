@@ -8,7 +8,7 @@ import { prefersReducedMotion } from '../../utils/motion'
 import { sound } from '../../components/sound'
 
 const NS = 'http://www.w3.org/2000/svg'
-const PALETTE = ['#FCE6EA', '#F4C9D1', '#E8A0AE', '#F2B7C2', '#FBE0E5']
+const PALETTE = ['#0047AB', '#3D7BE0', '#002E73', '#6A9AD4', '#2B6BCF']
 
 interface StrokeRuntime {
   word: number
@@ -33,7 +33,7 @@ interface StrokeRuntime {
 
 /**
  * Chapter 4 — handwritten soft-pink finale.
- * Anime.js SVG stroke drawing + Three.js rose particle trails.
+ * Anime.js SVG stroke drawing + Three.js cobalt particle trails.
  * Portal particles gather into the nib before writing begins.
  */
 export class FinaleWorld {
@@ -86,12 +86,12 @@ export class FinaleWorld {
     this.life = new Float32Array(this.count)
     this.age = new Float32Array(this.count).fill(1e9)
 
-    const rose = PALETTE.map((c) => new THREE.Color(c))
+    const cobalt = PALETTE.map((c) => new THREE.Color(c))
     for (let i = 0; i < this.count; i++) {
       pos[i * 3] = (Math.random() - 0.5) * 8
       pos[i * 3 + 1] = (Math.random() - 0.5) * 5
       pos[i * 3 + 2] = (Math.random() - 0.5) * 2
-      const c = rose[(Math.random() * rose.length) | 0]
+      const c = cobalt[(Math.random() * cobalt.length) | 0]
       this.colors[i * 3] = c.r
       this.colors[i * 3 + 1] = c.g
       this.colors[i * 3 + 2] = c.b
@@ -138,9 +138,9 @@ export class FinaleWorld {
           float d = length(gl_PointCoord - 0.5);
           float a = smoothstep(0.5, 0.05, d) * vA;
           if (a < 0.02) discard;
-          // Soft rose only — never push toward white
-          vec3 c = min(vC, vec3(0.96, 0.82, 0.86));
-          gl_FragColor = vec4(c, a * 0.7);
+          // Soft cobalt only — never wash toward white on cream
+          vec3 c = min(vC, vec3(0.35, 0.55, 0.9));
+          gl_FragColor = vec4(c, a * 0.75);
         }
       `,
     })
@@ -168,6 +168,19 @@ export class FinaleWorld {
   /**
    * Portal particles gather into the writing nib, then handwriting begins.
    */
+  /** Free-roam re-entry: show the settled handwriting without replaying the gather. */
+  showSettled(): void {
+    this.group.visible = true
+    if (!this.played) {
+      this.played = true
+      this.clearParticles()
+      this.mountSvgInstant()
+      return
+    }
+    this.clearParticles()
+    this.mountSvgInstant()
+  }
+
   playFromPortals(
     portalWorldPositions: Array<{ x: number; y: number; z: number }>,
     portalColors?: Float32Array[],
@@ -176,7 +189,7 @@ export class FinaleWorld {
     this.played = true
     sound.play('finale', 0.45)
 
-    // Seed particles from portals + a dense centre rose cloud so mid-handoff is never blank
+    // Seed particles from portals + a dense centre cobalt cloud so mid-handoff is never blank
     const pos = this.startPositions
     const nPortals = Math.max(1, portalWorldPositions.length)
     const sizAttr = this.points.geometry.getAttribute('size') as THREE.BufferAttribute
@@ -188,23 +201,23 @@ export class FinaleWorld {
         pos[i * 3 + 1] = p.y - this.group.position.y + (Math.random() - 0.5) * 1.4
         pos[i * 3 + 2] = p.z - this.group.position.z + (Math.random() - 0.5) * 0.8
       } else {
-        // Centre bloom in finale camera space — visible rose ink from first frame
+        // Centre bloom in finale camera space — visible cobalt ink from first frame
         pos[i * 3] = (Math.random() - 0.5) * 4.2
         pos[i * 3 + 1] = (Math.random() - 0.5) * 2.8
         pos[i * 3 + 2] = (Math.random() - 0.5) * 1.4
       }
-      // Prefer rose ink for the gather beat — portal samples only tint lightly
-      const rose = new THREE.Color(PALETTE[i % PALETTE.length])
+      // Prefer cobalt ink for the gather beat — portal samples only tint lightly
+      const ink = new THREE.Color(PALETTE[i % PALETTE.length])
       const portalCol = portalColors?.[i % nPortals]
       if (portalCol && portalCol.length >= 3) {
         const ci = (i * 3) % Math.max(3, portalCol.length - 2)
-        this.colors[i * 3] = portalCol[ci] * 0.12 + rose.r * 0.88
-        this.colors[i * 3 + 1] = portalCol[ci + 1] * 0.12 + rose.g * 0.88
-        this.colors[i * 3 + 2] = portalCol[ci + 2] * 0.12 + rose.b * 0.88
+        this.colors[i * 3] = portalCol[ci] * 0.12 + ink.r * 0.88
+        this.colors[i * 3 + 1] = portalCol[ci + 1] * 0.12 + ink.g * 0.88
+        this.colors[i * 3 + 2] = portalCol[ci + 2] * 0.12 + ink.b * 0.88
       } else {
-        this.colors[i * 3] = rose.r
-        this.colors[i * 3 + 1] = rose.g
-        this.colors[i * 3 + 2] = rose.b
+        this.colors[i * 3] = ink.r
+        this.colors[i * 3 + 1] = ink.g
+        this.colors[i * 3 + 2] = ink.b
       }
       const alp = this.points.geometry.getAttribute('aAlpha') as THREE.BufferAttribute
       alp.setX(i, 0.85)
@@ -236,7 +249,7 @@ export class FinaleWorld {
       ease: 'power3.inOut',
       onUpdate: () => this.applyGather(),
       onComplete: () => {
-        // Softly clear the gather while handwriting mounts — no empty navy beat
+        // Softly clear the gather while handwriting mounts — no empty cream beat
         this.mountAndWrite()
         gsap.to(this.morph, {
           t: 0,
@@ -283,7 +296,7 @@ export class FinaleWorld {
       posAttr.array[ix] += (tx - posAttr.array[ix]) * (0.08 + t * 0.18)
       posAttr.array[ix + 1] += (ty - posAttr.array[ix + 1]) * (0.08 + t * 0.18)
       posAttr.array[ix + 2] += (tz - posAttr.array[ix + 2]) * (0.08 + t * 0.18)
-      // Bright enough to read as rose ink streaming inward — never blank navy
+      // Bright enough to read as cobalt ink streaming inward — never blank cream
       const pulse = 0.55 + 0.3 * Math.sin(t * Math.PI)
       alp.setX(i, pulse)
       siz.setX(i, 3.2 + this.rnd() * 4.8)
@@ -340,14 +353,14 @@ export class FinaleWorld {
     const defs = document.createElementNS(NS, 'defs')
     defs.innerHTML = `
       <linearGradient id="inkG" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#FBE0E5"/>
-        <stop offset=".55" stop-color="#F4C9D1"/>
-        <stop offset="1" stop-color="#E4A3B1"/>
+        <stop offset="0" stop-color="#3D7BE0"/>
+        <stop offset=".55" stop-color="#0047AB"/>
+        <stop offset="1" stop-color="#002E73"/>
       </linearGradient>
       <radialGradient id="nibHalo">
-        <stop offset="0" stop-color="#F4C9D1" stop-opacity=".85"/>
-        <stop offset=".35" stop-color="#E8A0AE" stop-opacity=".35"/>
-        <stop offset="1" stop-color="#E8A0AE" stop-opacity="0"/>
+        <stop offset="0" stop-color="#3D7BE0" stop-opacity=".85"/>
+        <stop offset=".35" stop-color="#0047AB" stop-opacity=".35"/>
+        <stop offset="1" stop-color="#0047AB" stop-opacity="0"/>
       </radialGradient>
       <filter id="soft" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="1.2"/></filter>
     `
@@ -364,8 +377,8 @@ export class FinaleWorld {
     const nib = document.createElementNS(NS, 'g')
     nib.setAttribute('id', 'finale-nib')
     nib.setAttribute('opacity', '0')
-    // Soft rose nib only — no white core
-    nib.innerHTML = `<circle r="6.5" fill="url(#nibHalo)"/><circle r="1.05" fill="#E8A0AE"/>`
+    // Soft cobalt nib only — no white core
+    nib.innerHTML = `<circle r="6.5" fill="url(#nibHalo)"/><circle r="1.05" fill="#0047AB"/>`
     svg.appendChild(nib)
     this.nibEl = nib
 
