@@ -90,10 +90,13 @@ async function unlockGallery(page) {
 }
 
 async function scrollToProgress(page, progress) {
-  await page.evaluate((p) => {
-    const max = document.documentElement.scrollHeight - window.innerHeight
-    window.scrollTo({ top: Math.max(0, Math.round(max * p)), behavior: 'auto' })
-  }, progress)
+  for (let i = 0; i < 3; i++) {
+    await page.evaluate((p) => {
+      const max = document.documentElement.scrollHeight - window.innerHeight
+      window.scrollTo({ top: Math.max(0, Math.round(max * p)), behavior: 'auto' })
+    }, progress)
+    await page.waitForTimeout(200)
+  }
 }
 
 async function awaitChapter(page, chapter) {

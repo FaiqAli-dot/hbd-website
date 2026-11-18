@@ -121,6 +121,7 @@ export class MemoriesWorld {
           uOpacity: { value: 0 },
           uRim: { value: 0 },
           uGlow: { value: 0 },
+          uWash: { value: 0 },
         },
         vertexShader: photoRevealVertex,
         fragmentShader: circleMaskFragment,
@@ -133,16 +134,16 @@ export class MemoriesWorld {
       portalGroup.scale.setScalar(0.01)
       portalGroup.add(mesh)
 
-      // Soft luminous cobalt halo — Normal blend so it stays blue on cream (not washed white)
+      // Soft luminous cobalt halo — additive, clear under the photo so imagery stays visible
       const halo = new THREE.Mesh(
         new THREE.CircleGeometry(1.28, 128),
         new THREE.MeshBasicMaterial({
           map: MemoriesWorld.sharedGlowTexture(),
-          color: '#3d7be0',
+          color: '#0047ab',
           transparent: true,
           opacity: 0,
           depthWrite: false,
-          blending: THREE.NormalBlending,
+          blending: THREE.AdditiveBlending,
           toneMapped: false,
         }),
       )
@@ -190,14 +191,14 @@ export class MemoriesWorld {
     const c = size / 2
     // Halo mesh radius 1.28 → photo rim at c/1.28
     const photoR = c / 1.28
-    const g = ctx.createRadialGradient(c, c, photoR * 0.78, c, c, c * 0.995)
-    // #0047AB ring with soft #3D7BE0 bloom — additive on cream
+    // Fully clear under the photo disc — glow must not cover portal imagery
+    const g = ctx.createRadialGradient(c, c, photoR * 0.98, c, c, c * 0.995)
     g.addColorStop(0.0, 'rgba(0,71,171,0)')
-    g.addColorStop(0.08, 'rgba(61,123,224,0.18)')
-    g.addColorStop(0.16, 'rgba(0,71,171,0.88)')
-    g.addColorStop(0.28, 'rgba(0,71,171,0.55)')
-    g.addColorStop(0.48, 'rgba(61,123,224,0.22)')
-    g.addColorStop(0.72, 'rgba(0,71,171,0.06)')
+    g.addColorStop(0.02, 'rgba(61,123,224,0)')
+    g.addColorStop(0.08, 'rgba(61,123,224,0.55)')
+    g.addColorStop(0.18, 'rgba(0,71,171,0.85)')
+    g.addColorStop(0.35, 'rgba(0,71,171,0.35)')
+    g.addColorStop(0.6, 'rgba(61,123,224,0.12)')
     g.addColorStop(1.0, 'rgba(0,71,171,0)')
     ctx.clearRect(0, 0, size, size)
     ctx.fillStyle = g
@@ -562,12 +563,18 @@ export class MemoriesWorld {
       })
       const isActive = i === this.activeIndex
       gsap.to(p.material.uniforms.uOpacity, {
-        value: isActive ? 1 : 0.55,
+        value: 1,
+        duration: 0.7,
+        delay: i * 0.08,
+      })
+      gsap.to(p.material.uniforms.uWash, {
+        value: isActive ? 0 : 0.35,
         duration: 0.7,
         delay: i * 0.08,
       })
       gsap.to(p.material.uniforms.uRim, {
-        value: p.watched ? 1.15 : 1,
+        // Active: full rim; inactive: thin cobalt at reduced strength
+        value: isActive ? 1 : p.watched ? 0.45 : 0.32,
         duration: 0.65,
         delay: i * 0.08 + 0.05,
       })
@@ -595,7 +602,8 @@ export class MemoriesWorld {
       p.group.position.set(p.rest.x, p.rest.y, p.rest.z)
       p.group.scale.setScalar(p.rest.s)
       p.material.uniforms.uOpacity.value = 1
-      p.material.uniforms.uRim.value = p.watched ? 1.3 : 1
+      p.material.uniforms.uWash.value = 0
+      p.material.uniforms.uRim.value = p.watched ? 1.15 : 0.45
       p.material.uniforms.uGlow.value = 0
       p.material.uniforms.uBoost.value = p.watched ? 0.06 : 0
       const haloMat = p.halo.material as THREE.MeshBasicMaterial
@@ -761,8 +769,13 @@ export class MemoriesWorld {
         duration: 0.45,
         ease: 'power2.out',
       })
-      gsap.to(other.material.uniforms.uOpacity, {
-        value: other.watched ? 0.92 : 0.62,
+      gsap.to(other.material.uniforms.uOpacity, { value: 1, duration: 0.35 })
+      gsap.to(other.material.uniforms.uWash, {
+        value: other.watched ? 0.12 : 0.35,
+        duration: 0.35,
+      })
+      gsap.to(other.material.uniforms.uRim, {
+        value: other.watched ? 0.45 : 0.32,
         duration: 0.35,
       })
     })
@@ -866,17 +879,26 @@ export class MemoriesWorld {
   }
 
   private afterWatched(p: Portal): void {
-    // Watched rim: slightly brighter
-    gsap.to(p.material.uniforms.uRim, { value: 1.35, duration: 0.4 })
+    // Watched: clear wash, soft cobalt rim
+    gsap.to(p.material.uniforms.uRim, { value: 0.7, duration: 0.4 })
     gsap.to(p.material.uniforms.uBoost, { value: 0.06, duration: 0.4 })
+    gsap.to(p.material.uniforms.uWash, { value: 0.1, duration: 0.4 })
+    gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.35 })
 
     // Restore others to rest poses
     this.portals.forEach((other) => {
       other.group.visible = true
       other.group.position.set(other.rest.x, other.rest.y, other.rest.z)
       other.group.scale.setScalar(other.rest.s)
-      gsap.to(other.material.uniforms.uOpacity, {
-        value: other.watched ? 0.92 : other === p ? 1 : 0.62,
+      const nextActive = this.portals.findIndex((q) => !q.watched && q !== p)
+      const willBeActive = !other.watched && other !== p && this.portals.indexOf(other) === nextActive
+      gsap.to(other.material.uniforms.uOpacity, { value: 1, duration: 0.4 })
+      gsap.to(other.material.uniforms.uWash, {
+        value: willBeActive ? 0 : other.watched ? 0.12 : 0.35,
+        duration: 0.4,
+      })
+      gsap.to(other.material.uniforms.uRim, {
+        value: willBeActive ? 1 : other.watched ? 0.45 : 0.32,
         duration: 0.4,
       })
     })
@@ -900,11 +922,11 @@ export class MemoriesWorld {
       p.group.position.set(p.rest.x, p.rest.y, p.rest.z)
       p.group.scale.setScalar(p.rest.s)
       gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.5 })
+      gsap.to(p.material.uniforms.uWash, { value: 0, duration: 0.4 })
       gsap.to(p.material.uniforms.uGlow, { value: 0, duration: 0.3 })
       gsap.to(p.halo.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.3 })
       p.halo.scale.setScalar(1)
-      // Watched: slightly brighter cobalt rim
-      gsap.to(p.material.uniforms.uRim, { value: 1.3, duration: 0.35 })
+      gsap.to(p.material.uniforms.uRim, { value: 0.85, duration: 0.35 })
     })
     this.onAllWatchedCb?.()
   }
@@ -1006,15 +1028,19 @@ export class MemoriesWorld {
         haloMat.opacity = opacity
         p.halo.scale.setScalar(haloScale)
         p.material.uniforms.uOpacity.value = 1
+        p.material.uniforms.uWash.value += (0 - p.material.uniforms.uWash.value) * 0.12
+        p.material.uniforms.uRim.value += (1 - p.material.uniforms.uRim.value) * 0.1
         // Keep portal body at rest scale so L/R margins stay equal while glowing
         p.group.scale.setScalar(p.rest.s)
       } else if (!this.scrollUnlocked) {
         p.material.uniforms.uGlow.value *= 0.88
         haloMat.opacity *= 0.82
         p.halo.scale.setScalar(1)
-        if (!p.watched) {
-          p.material.uniforms.uOpacity.value += (0.62 - p.material.uniforms.uOpacity.value) * 0.08
-        }
+        p.material.uniforms.uOpacity.value += (1 - p.material.uniforms.uOpacity.value) * 0.1
+        const washTarget = p.watched ? 0.12 : 0.35
+        const rimTarget = p.watched ? 0.45 : 0.28
+        p.material.uniforms.uWash.value += (washTarget - p.material.uniforms.uWash.value) * 0.1
+        p.material.uniforms.uRim.value += (rimTarget - p.material.uniforms.uRim.value) * 0.1
         p.group.scale.setScalar(p.rest.s)
       } else {
         // Unlocked — hard snap rest pose so no leftover enlarge scale remains

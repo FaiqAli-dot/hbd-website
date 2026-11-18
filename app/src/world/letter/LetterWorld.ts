@@ -36,6 +36,8 @@ export class LetterWorld {
           uBoost: { value: 0.05 },
           uOpacity: { value: 0 },
           uRim: { value: 0 },
+          uGlow: { value: 0 },
+          uWash: { value: 0 },
         },
         vertexShader: photoRevealVertex,
         fragmentShader: circleMaskFragment,

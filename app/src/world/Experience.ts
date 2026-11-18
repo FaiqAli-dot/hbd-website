@@ -92,10 +92,11 @@ export class Experience {
       // 'default' is more stable on Safari/WebKit than high-performance
       powerPreference: isWebKit ? 'default' : 'high-performance',
     })
-    this.renderer.setClearColor('#fef4af')
+    this.renderer.setClearColor('#fffdf0')
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.05
+    // No tone mapping — ACES was crushing cream grounds into mustard
+    this.renderer.toneMapping = THREE.NoToneMapping
+    this.renderer.toneMappingExposure = 1.0
 
     this.adaptiveDpr = new AdaptiveDpr(maxPixelRatio(this.tier), this.tier === 'low' ? 0.7 : 0.85)
 
@@ -281,13 +282,15 @@ export class Experience {
   }
 
   private scrollIntoJourney(): void {
+    // Use instant scroll — a lingering smooth scroll was fighting later chapter jumps
+    // (Ch3 captures landed back on the letter band mid-tween).
     const letter = document.getElementById('chapter-letter')
     if (!letter) {
-      window.scrollTo({ top: Math.round(window.innerHeight * 0.85), behavior: 'smooth' })
+      window.scrollTo({ top: Math.round(window.innerHeight * 0.85), behavior: 'auto' })
       return
     }
     const top = letter.getBoundingClientRect().top + window.scrollY + Math.round(window.innerHeight * 0.15)
-    window.scrollTo({ top, behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+    window.scrollTo({ top, behavior: 'auto' })
   }
 
   private relockGallery(): void {
@@ -993,29 +996,24 @@ export class Experience {
 
     // Soft bloom/exposure crossfade — no hard pop between chapters
     // Memories bloom off — bloom was washing cobalt halos
-    const bloomTarget =
-      chapter === 'finale' ? 0 : chapter === 'gallery' ? 0.75 : chapter === 'letter' ? 0.45 : 0
-    const exposureTarget = chapter === 'finale' ? 0.88 : chapter === 'letter' ? 1.08 : 1.0
-    // NoToneMapping keeps cobalt glow readable on cream grounds
-    this.renderer.toneMapping =
-      chapter === 'memories' ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping
+    // Bloom off on cream — it was yellowing edges into mustard
+    const bloomTarget = 0
+    const exposureTarget = 1.0
+    // Stay on NoToneMapping so cream grounds never crush toward mustard
+    this.renderer.toneMapping = THREE.NoToneMapping
+    this.renderer.toneMappingExposure = 1.0
     if (prefersReducedMotion()) {
       this.post.setBloomMul(bloomTarget)
-      this.renderer.toneMappingExposure = exposureTarget
     } else {
-      const bloomProxy = { v: chapter === 'gallery' ? 0.75 : prev === 'finale' ? 0 : 0.9 }
+      const bloomProxy = { v: chapter === 'gallery' ? 0.35 : prev === 'finale' ? 0 : 0.25 }
       gsap.to(bloomProxy, {
         v: bloomTarget,
         duration: 1.35,
         ease: 'power2.inOut',
         onUpdate: () => this.post.setBloomMul(bloomProxy.v),
       })
-      gsap.to(this.renderer, {
-        toneMappingExposure: exposureTarget,
-        duration: 1.35,
-        ease: 'power2.inOut',
-      })
     }
+    void exposureTarget
 
     if (chapter === 'gallery') {
       if (this.transitionFlags.toLetter || this.journeyComplete) {

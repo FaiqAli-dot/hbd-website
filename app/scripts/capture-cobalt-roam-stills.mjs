@@ -90,7 +90,8 @@ async function unlockGallery(page) {
     null,
     { timeout: 20000 },
   )
-  await page.waitForTimeout(1000)
+  // Wait out pull-out → scrollIntoJourney (≤1800ms) so later chapter jumps stick
+  await page.waitForTimeout(2400)
 }
 
 async function scrollToProgress(page, progress) {
@@ -108,6 +109,36 @@ async function awaitChapter(page, chapter) {
   )
 }
 
+/** Jump and hold a chapter — retries if a lingering scroll tween pulls us back */
+async function holdChapter(page, progress, chapter) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    await scrollToProgress(page, progress)
+    await page.waitForTimeout(350)
+    const ok = await page
+      .waitForFunction(
+        (ch) => {
+          const dom = document.documentElement.dataset.chapter
+          const j = window.__hbd?.getJourneyState?.()
+          return dom === ch && j?.chapter === ch && j?.chapterBusy === false
+        },
+        chapter,
+        { timeout: 2500 },
+      )
+      .then(() => true)
+      .catch(() => false)
+    if (!ok) continue
+    await page.waitForTimeout(500)
+    const still = await page.evaluate(
+      (ch) =>
+        document.documentElement.dataset.chapter === ch &&
+        window.__hbd?.getJourneyState?.()?.chapter === ch,
+      chapter,
+    )
+    if (still) return
+  }
+  throw new Error(`could not hold chapter ${chapter}`)
+}
+
 async function shoot(page, name) {
   const file = path.join(OUT, name)
   await page.waitForTimeout(500)
@@ -119,27 +150,28 @@ async function captureSuite(page, tag) {
   await unlockGallery(page)
 
   // Letter right after ch1→ch2 lands
-  await page.evaluate(() => {
-    const letter = document.getElementById('chapter-letter')
-    if (letter) {
-      const top =
-        letter.getBoundingClientRect().top + window.scrollY + Math.round(window.innerHeight * 0.12)
-      window.scrollTo({ top, behavior: 'auto' })
-    }
-  })
-  await awaitChapter(page, 'letter')
+  await holdChapter(page, 0.18, 'letter')
   await page.waitForFunction(
     () => document.querySelectorAll('.letter-reveal.is-shown').length >= 1,
     null,
     { timeout: 3000 },
   )
-  await page.waitForTimeout(350)
+  await page.evaluate(() => window.__hbd?.forceCleanLetterStage?.())
+  await page.waitForTimeout(280)
   await shoot(page, `${tag}-letter-after-ch1-ch2.png`)
 
-  // Ch3 with blue glowing circle
-  await scrollToProgress(page, 0.45)
-  await awaitChapter(page, 'memories')
-  await page.waitForTimeout(1400)
+  // Ch3 with blue glowing circle — wait for rest-sized portals + entrance settle
+  await holdChapter(page, 0.48, 'memories')
+  await page.waitForFunction(
+    () => {
+      const bounds = window.__hbd?.projectMemoriesBounds?.() || []
+      if (bounds.length !== 4) return false
+      return bounds.every((b) => b.w >= 90 && b.h >= 90)
+    },
+    null,
+    { timeout: 12000 },
+  )
+  await page.waitForTimeout(1600)
   await shoot(page, `${tag}-ch3-cobalt-glow.png`)
 
   // Complete memories + finale
@@ -149,14 +181,38 @@ async function captureSuite(page, tag) {
     window.__hbdMemoriesTest.forceAllWatched?.()
   })
   await page.waitForTimeout(400)
-  await scrollToProgress(page, 0.88)
-  await awaitChapter(page, 'finale')
-  await page.waitForTimeout(2200)
+  await holdChapter(page, 0.88, 'finale')
+  // Wait for finale API, then snap to fully drawn Happy Birthday + message
+  await page.waitForFunction(() => !!window.__finale, null, { timeout: 20000 })
+  await page.waitForTimeout(400)
+  await page.evaluate(() => {
+    const f = window.__finale
+    if (!f) return
+    if (typeof f.showSettled === 'function') f.showSettled()
+    else if (typeof f.seekFraction === 'function') f.seekFraction(1)
+    f.setParticlesVisible?.(false)
+  })
+  await page.waitForFunction(
+    () => {
+      const svg = document.getElementById('finale-write-svg')
+      const msg = document.querySelector('[data-finale-msg]')
+      if (!svg || !msg) return false
+      const paths = [...svg.querySelectorAll('path')].filter(
+        (p) => p.getAttribute('visibility') !== 'hidden' && p.getAttribute('display') !== 'none',
+      )
+      const spans = [...msg.querySelectorAll('span')]
+      const spansOk =
+        spans.length === 0 || spans.every((s) => parseFloat(getComputedStyle(s).opacity || '1') > 0.8)
+      return paths.length >= 4 && spansOk
+    },
+    null,
+    { timeout: 12000 },
+  )
+  await page.waitForTimeout(600)
   await shoot(page, `${tag}-finale.png`)
 
   // Roam back to ch1
-  await scrollToProgress(page, 0.01)
-  await awaitChapter(page, 'gallery')
+  await holdChapter(page, 0.01, 'gallery')
   await page.waitForTimeout(700)
   await shoot(page, `${tag}-ch1-after-roam.png`)
 }

@@ -63,9 +63,9 @@ export class PostFX {
     this.vignette = new ShaderPass({
       uniforms: {
         tDiffuse: { value: null },
-        uIntensity: { value: 0.48 },
+        uIntensity: { value: 0 },
         uTime: { value: 0 },
-        uGrain: { value: tier === 'high' ? 0.016 : 0.011 },
+        uGrain: { value: tier === 'high' ? 0.004 : 0.002 },
       },
       vertexShader: vignetteVertex,
       fragmentShader: vignetteGrainFragment,

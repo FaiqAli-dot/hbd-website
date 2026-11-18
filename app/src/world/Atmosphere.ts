@@ -8,12 +8,13 @@ import {
 import type { QualityTier } from '../utils/quality'
 import { particleBudget } from '../utils/quality'
 
-/** Butter cream grounds + cobalt dust — shared across chapter crossfades (no navy flashes) */
+/** Butter cream grounds — keep nearly flat; #FEF4AF floor, centre #FFFDF0 (no mustard edges) */
 const PALETTES = {
-  gallery: ['#f7e98c', '#fef4af', '#fffbe0'],
-  letter: ['#f7e98c', '#fef4af', '#fffbe0'],
-  memories: ['#f7e98c', '#fef4af', '#fffbe0'],
-  finale: ['#f7e98c', '#fef4af', '#fffbe0'],
+  // Edge ≥ #FEF4AF floor; centre lifts to #FFFDF0 / #FFFBE0 (never mustard)
+  gallery: ['#fef4af', '#fffbe0', '#fffdf0'],
+  letter: ['#fef4af', '#fffbe0', '#fffdf0'],
+  memories: ['#fef4af', '#fffbe0', '#fffdf0'],
+  finale: ['#fef4af', '#fffbe0', '#fffdf0'],
 } as const
 
 export class Atmosphere {
@@ -56,16 +57,15 @@ export class Atmosphere {
       positions[i * 3] = (Math.random() - 0.5) * 28
       positions[i * 3 + 1] = (Math.random() - 0.5) * 18
       positions[i * 3 + 2] = -Math.random() * 70
-      scales[i] = 0.35 + Math.random() * 1.4
+      scales[i] = 0.12 + Math.random() * 0.35
       seeds[i] = Math.random()
     }
     const colors = new Float32Array(budget * 3)
-    // Soft cobalt dust motes on cream (#0047AB → #3D7BE0)
+    // Tiny cobalt speck dust (#0047AB) — low opacity via shader alpha
     for (let i = 0; i < budget; i++) {
-      const t = Math.random()
-      colors[i * 3] = 0.0 + t * 0.239
-      colors[i * 3 + 1] = 0.278 + t * 0.204
-      colors[i * 3 + 2] = 0.671 + t * 0.207
+      colors[i * 3] = 0.0
+      colors[i * 3 + 1] = 0.278
+      colors[i * 3 + 2] = 0.671
     }
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(positions, 3))
@@ -83,7 +83,7 @@ export class Atmosphere {
       uniforms: {
         uTime: { value: 0 },
         uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.75) },
-        uSize: { value: tier === 'low' ? 28 : 42 },
+        uSize: { value: tier === 'low' ? 10 : 14 },
         uColor: { value: new THREE.Color('#0047ab') },
         uColorMix: { value: 1 },
       },
@@ -107,8 +107,9 @@ export class Atmosphere {
       this.bgMat.uniforms.uColorC.value.copy(this.colorC)
     }
     this.dustSizeTarget =
-      chapter === 'finale' ? 10 : chapter === 'letter' ? 0 : chapter === 'gallery' ? 36 : 28
-    this.dustVisibleTarget = chapter !== 'finale' && chapter !== 'letter'
+      chapter === 'finale' ? 0 : chapter === 'letter' ? 0 : chapter === 'gallery' ? 0 : 6
+    // Keep dust off letter/finale/gallery collage; tiny cobalt only on memories
+    this.dustVisibleTarget = chapter === 'memories'
     if (this.dustVisibleTarget) this.dust.visible = true
     else this.dust.visible = false
   }
