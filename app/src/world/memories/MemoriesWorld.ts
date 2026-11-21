@@ -391,10 +391,19 @@ export class MemoriesWorld {
         : 'naturalHeight' in img
           ? (img as HTMLImageElement).naturalHeight || h
           : h
+    // Cover-crop into the square circle canvas. Small/rest: upper-centre bias so
+    // faces stay in frame; enlarged/playing: nearer centre (still slight upper).
     const scale = Math.max(w / Math.max(1, iw), h / Math.max(1, ih))
     const dw = iw * scale
     const dh = ih * scale
-    p.frameCtx.drawImage(img as CanvasImageSource, (w - dw) / 2, (h - dh) / 2, dw, dh)
+    const landscape = iw > ih * 1.05
+    const playing = p.phase === 'playing' || p.phase === 'expanding'
+    // Rest circles: centre/upper faces. Enlarged landscape: nudge right so second face stays in.
+    const yBias = playing ? (landscape ? 0.45 : 0.38) : landscape ? 0.42 : 0.3
+    const xBias = landscape ? (playing ? 0.58 : 0.5) : 0.5
+    const dx = (w - dw) * xBias
+    const dy = (h - dh) * yBias
+    p.frameCtx.drawImage(img as CanvasImageSource, dx, dy, dw, dh)
     p.texture.needsUpdate = true
     p.hasContentFrame = true
   }
@@ -710,8 +719,11 @@ export class MemoriesWorld {
       if (p.video.readyState >= 1) seekNearEnd()
     }
     p.phase = 'playing'
-    // Safety net for test shorten / flaky decode — never leave the flow hung
-    const safetyMs = window.__hbdMemoriesTest?.shortenPlayback ? 900 : 14000
+    // Safety net for test shorten / flaky decode — cover the longest real clip (~18s)
+    const knownDur = Number.isFinite(p.video.duration) ? p.video.duration : 0
+    const safetyMs = window.__hbdMemoriesTest?.shortenPlayback
+      ? 900
+      : Math.max(22000, Math.round(knownDur * 1000) + 4000)
     const safety = window.setTimeout(() => {
       if (p.phase === 'playing' && !p.watched) {
         if (window.__hbdMemoriesTest?.shortenPlayback) {
