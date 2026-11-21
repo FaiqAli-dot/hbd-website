@@ -76,58 +76,58 @@ export const galleryPhotos: GalleryPhoto[] = [
   {
     id: 'g1',
     src: gallery01,
-    alt: 'Hands held softly in warm light',
+    alt: 'Kiss on a red-lit ride',
     gesture: 'left',
-    caption: 'The way your hand finds mine',
+    caption: 'That night',
   },
   {
     id: 'g2',
     src: gallery02,
-    alt: 'Couple sharing a quiet moment',
+    alt: 'Mirror selfie on the sleeper bus',
     gesture: 'right',
-    caption: 'Quiet mornings, loud hearts',
+    caption: 'On the way',
   },
   {
     id: 'g3',
     src: gallery03,
-    alt: 'Soft romantic embrace',
+    alt: 'Wrapped in a cream blanket at night',
     gesture: 'up',
-    caption: 'Closer than words',
+    caption: 'Wrapped up',
   },
   {
     id: 'g4',
     src: gallery04,
-    alt: 'Wedding rings and soft florals',
+    alt: 'Couple selfie under the escalators',
     gesture: 'down',
-    caption: 'Promises we keep gently',
+    caption: 'You and me',
   },
   {
     id: 'g5',
     src: gallery05,
-    alt: 'Fashion portrait in soft light',
+    alt: 'In an orca hat at the SeaWorld shop',
     gesture: 'left',
-    caption: 'You, in every frame',
+    caption: 'Orca hat',
   },
   {
     id: 'g6',
     src: gallery06,
-    alt: 'Blooming peony flowers',
+    alt: 'Kayaking together, looking out at the hills',
     gesture: 'right',
-    caption: 'Petals and patience',
+    caption: 'On the water',
   },
   {
     id: 'g7',
     src: gallery07,
-    alt: 'Candlelit dinner table',
+    alt: 'Pointing ahead on a sunny plaza',
     gesture: 'up',
-    caption: 'Evenings that linger',
+    caption: 'Right there',
   },
   {
     id: 'g8',
     src: gallery08,
-    alt: 'Soft portrait in natural light',
+    alt: 'Car selfie with a yellow headband',
     gesture: 'down',
-    caption: 'My favorite view',
+    caption: 'In the car',
   },
 ]
 
@@ -148,48 +148,49 @@ export const letterCopy = {
   signature: '',
 }
 
+/** Letter-stage discs — square upper-centre crops from gallery 01–06 */
 export const circlePhotos: CirclePhoto[] = [
   {
     id: 'c1',
     src: circle01,
-    alt: 'Soft portrait memory',
+    alt: 'Red-lit kiss',
     position: { top: '8%', left: '6%', size: '7.5rem' },
   },
   {
     id: 'c2',
     src: circle02,
-    alt: 'Smile in afternoon light',
+    alt: 'Sleeper bus mirror',
     position: { top: '18%', right: '8%', size: '9rem' },
   },
   {
     id: 'c3',
     src: circle03,
-    alt: 'Quiet glance',
+    alt: 'Cream blanket',
     position: { top: '52%', left: '3%', size: '6.5rem' },
   },
   {
     id: 'c4',
     src: circle04,
-    alt: 'Warm light portrait',
+    alt: 'Under the escalators',
     position: { bottom: '18%', right: '5%', size: '8rem' },
   },
   {
     id: 'c5',
     src: circle05,
-    alt: 'Editorial portrait',
+    alt: 'Orca hat',
     position: { bottom: '8%', left: '14%', size: '5.5rem' },
   },
   {
     id: 'c6',
     src: circle06,
-    alt: 'Gentle expression',
+    alt: 'Kayak memory',
     position: { top: '62%', right: '16%', size: '6rem' },
   },
 ]
 
 /**
- * Ch3 portals — placeholder landscapes for now.
- * Swap personal clips anytime by replacing:
+ * Ch3 portals — personal clips.
+ * Swap anytime by replacing:
  *   app/src/assets/videos/memories/01.mp4 … 04.mp4
  *   app/src/assets/images/memories/poster-01.jpg … poster-04.jpg
  * Paths below are wired through Vite imports — no other files need edits.
@@ -199,29 +200,29 @@ export const memoryVideos: MemoryVideo[] = [
     id: 'm1',
     src: video01, // app/src/assets/videos/memories/01.mp4
     poster: poster01, // app/src/assets/images/memories/poster-01.jpg
-    caption: 'Golden hour, slow bloom',
-    label: 'Spring',
+    caption: 'Play',
+    label: 'Play',
   },
   {
     id: 'm2',
     src: video02, // app/src/assets/videos/memories/02.mp4
     poster: poster02, // app/src/assets/images/memories/poster-02.jpg
-    caption: 'Mountains holding the sky',
-    label: 'Wander',
+    caption: 'Night ride',
+    label: 'Night',
   },
   {
     id: 'm3',
     src: video03, // app/src/assets/videos/memories/03.mp4
     poster: poster03, // app/src/assets/images/memories/poster-03.jpg
-    caption: 'Light across open land',
-    label: 'Horizon',
+    caption: 'Together',
+    label: 'Glow',
   },
   {
     id: 'm4',
     src: video04, // app/src/assets/videos/memories/04.mp4
     poster: poster04, // app/src/assets/images/memories/poster-04.jpg
-    caption: 'Dusk settling soft',
-    label: 'Dusk',
+    caption: 'Blue water',
+    label: 'Depth',
   },
 ]
 

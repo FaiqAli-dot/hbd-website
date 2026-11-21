@@ -1,17 +1,17 @@
-# Placeholder media attribution
+# Media notes
 
-Stock placeholders are committed into this repo so the site does not depend on temporary URLs.
+Personal photos and videos for this birthday site. Do not redistribute.
 
 ## Images
 
-Unsplash License (https://unsplash.com/license) — free to use, including commercial use; no permission required. Replace with personal photos before sharing privately if desired.
-
-Files under `images/gallery/` and `images/circles/` were sourced from Unsplash portraits, florals, and romantic scenes, then resized for the web.
+`images/gallery/01–08.jpg` — portrait stills (optimised ≤1200px long edge).
+`images/circles/01–06.jpg` — upper-centre square crops from gallery photos for letter discs.
+`images/memories/poster-01–04.jpg` — representative frames from the memory clips.
 
 ## Videos
 
-Ken Burns-style loops under `videos/memories/` were generated locally with ffmpeg from Unsplash stills (same license). Keep files small for GitHub Pages. Swap personal clips via `src/content/config.ts` (`memoryVideos` → `app/src/assets/videos/memories/01–04.mp4`).
+`videos/memories/01–04.mp4` — H.264 + AAC (when present), `+faststart`, original resolution retained.
 
 ## Audio
 
-Soft ambient and interaction tones under `audio/` were synthesized with ffmpeg (`sine` + fades). Replace with licensed music of your choice via `src/content/config.ts`.
+Soft ambient and interaction tones under `audio/` were synthesized with ffmpeg (`sine` + fades). Replace via `src/content/config.ts` if desired.

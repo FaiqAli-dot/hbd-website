@@ -391,10 +391,19 @@ export class MemoriesWorld {
         : 'naturalHeight' in img
           ? (img as HTMLImageElement).naturalHeight || h
           : h
+    // Cover-crop into the square circle canvas. Small/rest: upper-centre bias so
+    // faces stay in frame; enlarged/playing: nearer centre (still slight upper).
     const scale = Math.max(w / Math.max(1, iw), h / Math.max(1, ih))
     const dw = iw * scale
     const dh = ih * scale
-    p.frameCtx.drawImage(img as CanvasImageSource, (w - dw) / 2, (h - dh) / 2, dw, dh)
+    const landscape = iw > ih * 1.05
+    const playing = p.phase === 'playing' || p.phase === 'expanding'
+    // Rest circles: centre/upper faces. Enlarged landscape: nudge right so second face stays in.
+    const yBias = playing ? (landscape ? 0.45 : 0.38) : landscape ? 0.42 : 0.3
+    const xBias = landscape ? (playing ? 0.58 : 0.5) : 0.5
+    const dx = (w - dw) * xBias
+    const dy = (h - dh) * yBias
+    p.frameCtx.drawImage(img as CanvasImageSource, dx, dy, dw, dh)
     p.texture.needsUpdate = true
     p.hasContentFrame = true
   }
@@ -568,8 +577,14 @@ export class MemoriesWorld {
         delay: i * 0.08,
       })
       gsap.to(p.material.uniforms.uWash, {
+        // Active invite: zero wash so the glow circle stays true-colour
         value: isActive ? 0 : 0.35,
         duration: 0.7,
+        delay: i * 0.08,
+      })
+      gsap.to(p.material.uniforms.uSoft, {
+        value: isActive ? 0.022 : 0.04,
+        duration: 0.5,
         delay: i * 0.08,
       })
       gsap.to(p.material.uniforms.uRim, {
@@ -710,8 +725,11 @@ export class MemoriesWorld {
       if (p.video.readyState >= 1) seekNearEnd()
     }
     p.phase = 'playing'
-    // Safety net for test shorten / flaky decode — never leave the flow hung
-    const safetyMs = window.__hbdMemoriesTest?.shortenPlayback ? 900 : 14000
+    // Safety net for test shorten / flaky decode — cover the longest real clip (~18s)
+    const knownDur = Number.isFinite(p.video.duration) ? p.video.duration : 0
+    const safetyMs = window.__hbdMemoriesTest?.shortenPlayback
+      ? 900
+      : Math.max(22000, Math.round(knownDur * 1000) + 4000)
     const safety = window.setTimeout(() => {
       if (p.phase === 'playing' && !p.watched) {
         if (window.__hbdMemoriesTest?.shortenPlayback) {
@@ -829,9 +847,19 @@ export class MemoriesWorld {
 
     gsap.killTweensOf(p.group.position)
     gsap.killTweensOf(p.group.scale)
+    gsap.killTweensOf(p.material.uniforms.uWash)
+    gsap.killTweensOf(p.material.uniforms.uSoft)
+    gsap.killTweensOf(p.material.uniforms.uRim)
+    gsap.killTweensOf(p.material.uniforms.uGlow)
+    // Full-clarity player — cream wash + soft feather fully off
+    p.material.uniforms.uWash.value = 0
+    p.material.uniforms.uSoft.value = 0.018
+    p.material.uniforms.uBoost.value = 0
+    p.material.uniforms.uOpacity.value = 1
     gsap.to(p.material.uniforms.uOpacity, { value: 1, duration: 0.3 })
-    // Quiet rim while playing — invitation glow off
-    gsap.to(p.material.uniforms.uGlow, { value: 0.12, duration: 0.4 })
+    // Thin crisp cobalt rim; invitation glow off
+    gsap.to(p.material.uniforms.uRim, { value: 0.55, duration: 0.35 })
+    gsap.to(p.material.uniforms.uGlow, { value: 0, duration: 0.25 })
     gsap.to(p.halo.material as THREE.MeshBasicMaterial, { opacity: 0, duration: 0.25 })
     p.halo.scale.setScalar(1)
     gsap.to(p.group.position, {
@@ -1009,6 +1037,16 @@ export class MemoriesWorld {
         this.blitVideoFrame(p)
       }
 
+      // Enlarged player — force true-colour video every frame (no cream wash / soft haze)
+      if (p.phase === 'expanding' || p.phase === 'playing') {
+        p.material.uniforms.uWash.value = 0
+        p.material.uniforms.uSoft.value = 0.018
+        p.material.uniforms.uOpacity.value = 1
+        p.material.uniforms.uGlow.value = 0
+        ;(p.halo.material as THREE.MeshBasicMaterial).opacity = 0
+        return
+      }
+
       if (!this.entered || p.phase !== 'rest') return
 
       // Soft idle bob (does not accumulate — absolute offset from rest)
@@ -1028,7 +1066,8 @@ export class MemoriesWorld {
         haloMat.opacity = opacity
         p.halo.scale.setScalar(haloScale)
         p.material.uniforms.uOpacity.value = 1
-        p.material.uniforms.uWash.value += (0 - p.material.uniforms.uWash.value) * 0.12
+        p.material.uniforms.uWash.value = 0
+        p.material.uniforms.uSoft.value += (0.022 - p.material.uniforms.uSoft.value) * 0.12
         p.material.uniforms.uRim.value += (1 - p.material.uniforms.uRim.value) * 0.1
         // Keep portal body at rest scale so L/R margins stay equal while glowing
         p.group.scale.setScalar(p.rest.s)
@@ -1040,6 +1079,7 @@ export class MemoriesWorld {
         const washTarget = p.watched ? 0.12 : 0.35
         const rimTarget = p.watched ? 0.45 : 0.28
         p.material.uniforms.uWash.value += (washTarget - p.material.uniforms.uWash.value) * 0.1
+        p.material.uniforms.uSoft.value += (0.04 - p.material.uniforms.uSoft.value) * 0.1
         p.material.uniforms.uRim.value += (rimTarget - p.material.uniforms.uRim.value) * 0.1
         p.group.scale.setScalar(p.rest.s)
       } else {

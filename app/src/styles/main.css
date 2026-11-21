@@ -266,25 +266,35 @@ html.gallery-complete .webgl-canvas {
 }
 
 .gallery-hud__caption {
+  /* Sit on cream below the framed print — never over the photo */
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 5.5rem;
+  bottom: max(4.6rem, env(safe-area-inset-bottom, 0px) + 4.1rem);
   margin: 0;
+  padding: 0 1.25rem;
   text-align: center;
   font-family: var(--font-body);
-  font-size: clamp(1.05rem, 2.4vw, 1.45rem);
+  font-size: clamp(0.95rem, 2vw, 1.2rem);
   font-style: italic;
   letter-spacing: 0.02em;
-  color: var(--ink);
+  color: var(--accent);
   opacity: 0;
   transition: opacity 0.55s var(--ease-out);
   pointer-events: none;
-  text-shadow: 0 8px 28px rgba(254, 244, 175, 0.85);
+  text-shadow: none;
+  z-index: 3;
 }
 
 .gallery-hud__caption.is-shown {
-  opacity: 0.92;
+  opacity: 1;
+}
+
+@media (max-width: 520px) {
+  .gallery-hud__caption {
+    bottom: max(5.4rem, env(safe-area-inset-bottom, 0px) + 4.8rem);
+    font-size: 0.95rem;
+  }
 }
 
 .gallery-hud.is-complete .gallery-hud__caption {
