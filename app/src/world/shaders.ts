@@ -166,8 +166,8 @@ varying vec2 vUv;
 void main() {
   vec2 uv = vUv * 2.0 - 1.0;
   float r = length(uv);
-  // Tight AA disc — keep edge crisp so no navy gap between photo and cobalt halo
-  float soft = max(uSoft * 0.55, 0.02);
+  // Crisp AA disc — uSoft near 0 while playing so the edge isn't milky
+  float soft = clamp(uSoft, 0.012, 0.08);
   float edge0 = 1.0 - soft;
   float mask = 1.0 - smoothstep(edge0, 1.0, r);
   if (mask < 0.01) discard;

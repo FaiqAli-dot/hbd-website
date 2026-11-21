@@ -76,58 +76,58 @@ export const galleryPhotos: GalleryPhoto[] = [
   {
     id: 'g1',
     src: gallery01,
-    alt: 'A soft kiss under red ride lights',
+    alt: 'Kiss on a red-lit ride',
     gesture: 'left',
-    caption: 'Closer in the dark',
+    caption: 'That night',
   },
   {
     id: 'g2',
     src: gallery02,
     alt: 'Mirror selfie on the sleeper bus',
     gesture: 'right',
-    caption: 'Somewhere between cities',
+    caption: 'On the way',
   },
   {
     id: 'g3',
     src: gallery03,
     alt: 'Wrapped in a cream blanket at night',
     gesture: 'up',
-    caption: 'Soft landing',
+    caption: 'Wrapped up',
   },
   {
     id: 'g4',
     src: gallery04,
     alt: 'Couple selfie under the escalators',
     gesture: 'down',
-    caption: 'Us, mid-adventure',
+    caption: 'You and me',
   },
   {
     id: 'g5',
     src: gallery05,
     alt: 'In an orca hat at the SeaWorld shop',
     gesture: 'left',
-    caption: 'Souvenir smile',
+    caption: 'Orca hat',
   },
   {
     id: 'g6',
     src: gallery06,
     alt: 'Kayaking together, looking out at the hills',
     gesture: 'right',
-    caption: 'Paddling into the quiet',
+    caption: 'On the water',
   },
   {
     id: 'g7',
     src: gallery07,
     alt: 'Pointing ahead on a sunny plaza',
     gesture: 'up',
-    caption: 'Look — over there',
+    caption: 'Right there',
   },
   {
     id: 'g8',
     src: gallery08,
     alt: 'Car selfie with a yellow headband',
     gesture: 'down',
-    caption: 'Road-trip glow',
+    caption: 'In the car',
   },
 ]
 
@@ -200,28 +200,28 @@ export const memoryVideos: MemoryVideo[] = [
     id: 'm1',
     src: video01, // app/src/assets/videos/memories/01.mp4
     poster: poster01, // app/src/assets/images/memories/poster-01.jpg
-    caption: 'Beanbags and bright jackets',
+    caption: 'Play',
     label: 'Play',
   },
   {
     id: 'm2',
     src: video02, // app/src/assets/videos/memories/02.mp4
     poster: poster02, // app/src/assets/images/memories/poster-02.jpg
-    caption: 'Looking back on the ride home',
+    caption: 'Night ride',
     label: 'Night',
   },
   {
     id: 'm3',
     src: video03, // app/src/assets/videos/memories/03.mp4
     poster: poster03, // app/src/assets/images/memories/poster-03.jpg
-    caption: 'Laughing under festival lights',
+    caption: 'Together',
     label: 'Glow',
   },
   {
     id: 'm4',
     src: video04, // app/src/assets/videos/memories/04.mp4
     poster: poster04, // app/src/assets/images/memories/poster-04.jpg
-    caption: 'Hand in hand through the blue',
+    caption: 'Blue water',
     label: 'Depth',
   },
 ]

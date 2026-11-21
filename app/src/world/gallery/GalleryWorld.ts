@@ -229,8 +229,14 @@ export class GalleryWorld {
 
   private standOff(h: number, w: number): number {
     const tanH = Math.tan(THREE.MathUtils.degToRad(this.fov / 2))
-    // Tight framing (~88% height fill) — storyboard settle fills the frame
-    return Math.max(h / (0.88 * 2 * tanH), w / (0.96 * 2 * tanH * this.aspect))
+    // Leave margin so the framed print + cream border stay inside the viewport
+    // (desktop was clipping the top of portrait prints at ~88% fill).
+    const portrait = this.aspect < 0.85
+    const fillH = portrait ? 0.7 : 0.66
+    const fillW = portrait ? 0.78 : 0.42
+    // Extra headroom above for chrome; prints are ~3:4 so height usually dominates
+    const hEff = h * 1.06
+    return Math.max(hEff / (fillH * 2 * tanH), w / (fillW * 2 * tanH * this.aspect))
   }
 
   private buildPaths(): void {
@@ -238,21 +244,21 @@ export class GalleryWorld {
     const outro = layout.outro as { cam: number[]; look: number[] }
     const transitions = layout.transitions as LayoutTransition[]
 
-    // Aspect-aware stand-off so prints keep physical size on tall phones,
-    // while keeping the approved Bezier shape from layout.json.
-    const aspectScale = THREE.MathUtils.clamp(1.15 / Math.max(0.55, this.aspect), 0.92, 1.35)
+    // Aspect-aware stand-off — never pull closer than 1.0 (that was clipping desktop tops)
+    const aspectScale = THREE.MathUtils.clamp(1.15 / Math.max(0.55, this.aspect), 1.0, 1.4)
 
     const stations: Array<{ cam: THREE.Vector3; look: THREE.Vector3; n: THREE.Vector3 }> = [
       { cam: V(intro.cam), look: V(intro.look), n: new THREE.Vector3(0, 0, 1) },
     ]
     this.photos.forEach((pm) => {
-      // Always use aspect-aware stand-off so settled/mid-flight framing stays tight
-      // (authored layout.cam was calibrated looser and left too much negative space).
+      // Aspect-aware stand-off with margin so framed prints aren't clipped
       const d = this.standOff(pm.layout.size[1], pm.layout.size[0]) * aspectScale
       const cam = V(pm.layout.pos).add(pm.normal.clone().multiplyScalar(d))
+      // Bias look slightly below centre so cream below the frame holds the caption
+      const look = V(pm.layout.pos).add(new THREE.Vector3(0, -pm.layout.size[1] * 0.08, 0))
       stations.push({
         cam,
-        look: V(pm.layout.pos),
+        look,
         n: pm.normal.clone(),
       })
     })
